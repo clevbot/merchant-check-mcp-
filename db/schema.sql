@@ -45,7 +45,18 @@ CREATE TABLE IF NOT EXISTS merchant_signals (
   -- (src/dashboard.ts) so gradientdecisions.com never shows fake data
   -- alongside real merchants; still visible to check_merchant itself so the
   -- demo script keeps working.
-  is_demo                  INTEGER NOT NULL DEFAULT 0
+  is_demo                  INTEGER NOT NULL DEFAULT 0,
+
+  -- CAIP-2 network id this row's activity was observed on. Distinct from
+  -- is_demo: is_demo marks *fake* rows, network marks *which chain real
+  -- rows came from*. Currently always eip155:8453 (Base mainnet) for real
+  -- BazaarDataSource writes — it only ever ingests mainnet payTo addresses
+  -- (see indexer.ts BASE_MAINNET_NETWORK). The two is_demo=1 rows are tagged
+  -- eip155:84532 (Base Sepolia), matching the network the demo/test payment
+  -- flow actually runs on. Once test-network activity can appear in a real
+  -- data source (not just synthetic demo rows), filter on this rather than
+  -- is_demo to keep it out of the public dataset.
+  network                   TEXT NOT NULL DEFAULT 'eip155:8453'
 );
 
 -- One row per (resource_type, price) quote a merchant has given, used for

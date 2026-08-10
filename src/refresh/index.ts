@@ -56,6 +56,7 @@ function aggregate(
 
   return {
     wallet_address: activity.walletAddress.toLowerCase(),
+    network: activity.network,
     first_seen_at: activity.firstSeenAt,
     wallet_age_days: walletAgeDays,
     unique_payer_count: activity.uniquePayerCount,
@@ -98,11 +99,12 @@ async function upsertSignals(
 ): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO merchant_signals (
-      wallet_address, first_seen_at, wallet_age_days, unique_payer_count, total_tx_count,
+      wallet_address, network, first_seen_at, wallet_age_days, unique_payer_count, total_tx_count,
       payer_cluster_flag, completed_flow_count, abandoned_flow_count, refund_count,
       refund_eligible_volume, price_variance_flag, velocity_anomaly_flag, tier, reasons_json, refreshed_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(wallet_address) DO UPDATE SET
+      network = excluded.network,
       first_seen_at = excluded.first_seen_at,
       wallet_age_days = excluded.wallet_age_days,
       unique_payer_count = excluded.unique_payer_count,
@@ -120,6 +122,7 @@ async function upsertSignals(
   )
     .bind(
       row.wallet_address,
+      row.network,
       row.first_seen_at,
       row.wallet_age_days,
       row.unique_payer_count,

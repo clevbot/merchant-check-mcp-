@@ -46,9 +46,18 @@ paid `trusted`/`avoid` response:
 (`0x11111111111111111111111111111111111111d1`,
 `0x22222222222222222222222222222222222222d2`), not real merchants, kept
 around because there's still no real `avoid` example (see "Still needed"
-below). They're marked `is_demo = 1` and excluded from the public dashboard
-and `/api/wallets` (`src/dashboard.ts` filters `WHERE is_demo = 0`) —
-`gradientdecisions.com` only ever shows real data — but `check_merchant`
+below). They're marked `is_demo = 1` **and** tagged `network = 'eip155:84532'`
+(Base Sepolia — the network the demo/test payment flow actually runs on,
+vs. `eip155:8453` Base mainnet for every real `BazaarDataSource` row). Two
+separate columns on purpose: `is_demo` marks *fake* rows, `network` marks
+*which chain real rows came from* — different failure modes to guard
+against (synthetic data vs. real testnet data leaking into the mainnet
+dataset), so both stay explicit instead of collapsing into one flag. Both
+filters (`WHERE is_demo = 0 AND network = 'eip155:8453'`) currently produce
+an identical result set, but that changes the moment any real data source
+can observe testnet activity. Excluded from the public dashboard and
+`/api/wallets` (`src/dashboard.ts`) — `gradientdecisions.com` only ever
+shows real mainnet data — but `check_merchant`
 itself still sees them, so `npm run demo` keeps exercising all three tiers.
 (An earlier version of these two addresses was 38 hex characters instead of
 40 — `isValidWalletAddress`'s own regex rejected them, so every demo call

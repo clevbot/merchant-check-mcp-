@@ -30,7 +30,8 @@
  */
 
 const BAZAAR_DISCOVERY_URL = "https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources";
-const BASE_MAINNET_NETWORK = "eip155:8453";
+/** Exported so other modules (e.g. src/dashboard.ts) filter on the same value rather than a second hardcoded copy. */
+export const BASE_MAINNET_NETWORK = "eip155:8453";
 const PAGE_SIZE = 100;
 // 20 pages * 100 = up to 2,000 resources per refresh run. Bazaar had ~14.5k
 // total resources as of 2026-08-10; raise this once refresh-worker runtime/
@@ -40,6 +41,8 @@ const MAX_PAGES = 20;
 
 export interface RawMerchantActivity {
   walletAddress: string;
+  /** CAIP-2 network id this activity was observed on, e.g. "eip155:8453". */
+  network: string;
   firstSeenAt: number | null; // unix seconds
   txCount: number;
   uniquePayerCount: number;
@@ -134,6 +137,7 @@ export class BazaarDataSource implements ChainDataSource {
       } else {
         this.cache.set(wallet, {
           walletAddress: wallet,
+          network: BASE_MAINNET_NETWORK,
           firstSeenAt: null,
           txCount: calls,
           uniquePayerCount: payers,

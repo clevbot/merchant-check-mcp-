@@ -41,4 +41,6 @@ export interface MerchantSignalRow {
   tier: Tier | null;
   reasons_json: string | null;
   refreshed_at: number;
+  /** CAIP-2 network id this row's activity was observed on, e.g. "eip155:8453". */
+  network: string;
 }

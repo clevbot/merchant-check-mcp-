@@ -1,4 +1,5 @@
 import type { Env } from "./types";
+import { BASE_MAINNET_NETWORK } from "./refresh/indexer";
 
 interface DashboardRow {
   wallet_address: string;
@@ -17,14 +18,23 @@ interface DashboardData {
 }
 
 export async function getDashboardData(env: Env): Promise<DashboardData> {
+  // is_demo excludes the two synthetic rows; network excludes any
+  // non-mainnet activity (e.g. the same demo rows, which are tagged
+  // eip155:84532 / Base Sepolia — see db/schema.sql). Both filters
+  // currently produce the same result set since the only non-mainnet rows
+  // are also the demo rows, but they guard against different future
+  // failure modes (fake data vs. real testnet data), so both stay explicit
+  // rather than collapsing to one.
   const { results } = await env.DB.prepare(
     `SELECT wallet_address, tier, reasons_json, total_tx_count, unique_payer_count,
             wallet_age_days, refreshed_at
      FROM merchant_signals
-     WHERE is_demo = 0
+     WHERE is_demo = 0 AND network = ?
      ORDER BY total_tx_count DESC
      LIMIT 1000`,
-  ).all<DashboardRow>();
+  )
+    .bind(BASE_MAINNET_NETWORK)
+    .all<DashboardRow>();
 
   const counts = { trusted: 0, caution: 0, avoid: 0 };
   let lastRefreshedAt: number | null = null;
