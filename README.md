@@ -6,10 +6,67 @@ price-fairness read on a merchant, paid per-query via x402. See the original
 build brief for full product context; this file tracks what's actually built,
 what's stubbed, and what needs you before this goes further.
 
-## Status: scaffolded, not deployed, not charging real money
+## Status: deployed to testnet, payment flow verified end-to-end
 
-Everything below runs against **Base Sepolia (testnet)** by default. Nothing
-here has touched mainnet, DNS, or a live facilitator with real funds.
+Live at **https://mcp.gradientdecisions.com/mcp** (Base Sepolia / testnet
+USDC only — nothing here has touched mainnet or real funds). Verified
+working, in order: free `tools/list` discovery → `tools/call` on
+`check_merchant` correctly 402s → demo client auto-detects the 402, builds
+and signs an x402 payment, submits it → facilitator correctly evaluates and
+rejects it for insufficient balance (the demo wallet is an intentionally
+unfunded throwaway — see "Try it yourself" below to fund it and see a real
+paid response).
+
+## Try it yourself
+
+```bash
+npm run demo
+```
+
+Uses the throwaway keypair in `.env.demo` (gitignored, testnet-only, zero
+real value). To get past the "insufficient balance" step and see an actual
+paid `trusted`/`avoid` response:
+
+1. Get the payer address: `DEMO_PAYER_ADDRESS` in `.env.demo`
+   (`0x9AaF5bB90307bacb9cB60f54c1be2B65B0771282`).
+2. Fund it with Base Sepolia test USDC:
+   [faucet.circle.com](https://faucet.circle.com) (select Base Sepolia).
+3. Re-run `npm run demo`. The two seeded wallets
+   (`0x1111...d111` / `0x2222...d222`, inserted directly into D1 for this
+   demo — see "Demo data" below) should come back `trusted` and `avoid`
+   respectively, with a real settlement tx hash.
+
+## Demo data
+
+`merchant_signals` currently has two synthetic rows I inserted directly via
+`wrangler d1 execute --remote`, so the demo has something to differentiate
+before a real indexer exists — clearly fake addresses (`0x1111...d111`,
+`0x2222...d222`), not real merchants. Delete them once real refresh-worker
+data exists:
+```bash
+wrangler d1 execute merchant-signals --remote --command \
+  "DELETE FROM merchant_signals WHERE wallet_address IN ('0x1111111111111111111111111111111111d111','0x2222222222222222222222222222222222d222')"
+```
+
+## Known issue found and fixed during deployment
+
+`resource.serviceName` in `src/index.ts`'s `createPaymentWrapper` config
+must be printable ASCII only (no em-dash) and ≤32 characters —
+`@x402/core`'s `ResourceInfoSchema` rejects anything else with a `ZodError`,
+which silently broke payment-required detection on the client side (the
+malformed response just looked like an inert error result, not something
+worth auto-paying for). Found by testing against the live deployment, not
+from any docs — worth knowing if you add more resource metadata elsewhere.
+
+## Remaining one-time account setup
+
+- **`workers.dev` subdomain**: the scheduled refresh-worker cron trigger
+  failed to attach on deploy — `wrangler` reports the account needs a
+  `workers.dev` subdomain enabled first (one-time, one click: open the
+  Workers section of the Cloudflare dashboard once). Not blocking anything
+  above since the refresh worker can't do anything real yet regardless (no
+  `CDP_API_KEY`, see "Data source" below) — re-run `wrangler deploy` after
+  enabling it to attach the cron trigger.
 
 ## Phase 0 resolution (stack compatibility)
 
@@ -69,9 +126,8 @@ all.
   `merchant_signals` rows.
 - [`src/refresh/indexer.ts`](src/refresh/indexer.ts) — `ChainDataSource`
   interface. See "Data source" below — not wired to real data yet.
-- [`db/schema.sql`](db/schema.sql) — D1 schema. Applied and verified
-  syntactically valid via `sqlite3` (see "Local dev limitation" below for why
-  not via `wrangler d1 execute`).
+- [`db/schema.sql`](db/schema.sql) — D1 schema. Applied to the live remote
+  `merchant-signals` D1 database (`wrangler d1 execute --remote`).
 - [`scripts/backtest.ts`](scripts/backtest.ts) +
   [`scripts/labeled-wallets.json`](scripts/labeled-wallets.json) — the
   brief's required validation step, before charging for real queries.
@@ -103,33 +159,39 @@ then, the scheduled worker will throw on every tick (intentional — it's
 better than silently writing empty data). There's also a `FixtureDataSource`
 for local testing without live chain access.
 
-## Before this can run for real
+## Done vs. still needed
 
-1. **`PAYOUT_ADDRESS`** — a Base wallet address *you control* to receive
-   USDC. I don't generate wallets or hold keys; you provide the public
-   address. Set it with:
+Done (testnet, this session):
+- ✅ Cloudflare account authenticated (`wrangler login`, colin.cleven@gmail.com).
+- ✅ D1 database created (`merchant-signals`) and schema applied remotely.
+- ✅ `PAYOUT_ADDRESS` secret set — **currently a throwaway testnet keypair I
+  generated** (`0x497e...118b`, see `.env.demo`), not a real wallet you
+  control. Fine for testnet demoing; **must be replaced before mainnet** —
+  see below.
+- ✅ Deployed to `mcp.gradientdecisions.com` (`custom_domain = true` in
+  `wrangler.toml` auto-provisioned DNS + SSL since the zone was already on
+  this Cloudflare account).
+- ✅ Two synthetic demo rows seeded into `merchant_signals` (see "Demo data").
+
+Still needed:
+1. **A real `PAYOUT_ADDRESS`** before mainnet — a Base wallet address *you*
+   control. I don't hold keys or generate wallets for real funds; replace the
+   testnet throwaway with:
    ```bash
    wrangler secret put PAYOUT_ADDRESS
    ```
-2. **A D1 database** — `wrangler d1 create merchant-signals`, then paste the
-   returned `database_id` into `wrangler.toml` (currently
-   `REPLACE_WITH_D1_DATABASE_ID`).
-3. **A CDP API key** (or a different `ChainDataSource` implementation) —
-   without this, the refresh worker can't populate `merchant_signals`, and
-   `check_merchant` will report "no transaction history" for every wallet.
-4. **The backtest** — fill in `scripts/labeled-wallets.json` with a handful
+2. **A CDP API key** (or a different `ChainDataSource` implementation) —
+   without this, the refresh worker can't populate `merchant_signals` from
+   real chain data, and `check_merchant` will report "no transaction
+   history" for every wallet except the two synthetic demo rows.
+3. **The backtest** — fill in `scripts/labeled-wallets.json` with a handful
    of known-legitimate and known-scam Base wallet addresses (public
    scam-address lists / on-chain sleuthing communities, per the brief), run
    the refresh worker once, then `npm run backtest`. Don't flip to charging
    for real queries until this passes.
-5. **Deploy** — `wrangler login` (your Cloudflare account, not something I
-   can do) then `npm run deploy`.
-6. **DNS** — CNAME `mcp.gradientdecisions.com` (or similar) to the deployed
-   Worker. This touches your domain's DNS — your call, your Cloudflare
-   account.
-7. **Registry submission** — once live, submit the URL to MCP/agent tool
-   registries. Explicit-permission action, and only makes sense once 1–6 are
-   actually done.
+4. **Registry submission** — once you're ready for real agents to find it,
+   submit the URL to MCP/agent tool registries. Explicit-permission action —
+   ask before I'd do this even once mainnet is live.
 
 ## Going to mainnet
 

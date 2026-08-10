@@ -67,7 +67,10 @@ function createServer(env: Env, accepts: PaymentRequirements[], resourceServer: 
     accepts,
     resource: {
       description: "Merchant risk/reputation and price-fairness check, backed by on-chain x402 history.",
-      serviceName: "Gradient Decisions — Merchant Check",
+      // serviceName is validated against @x402/core's ResourceInfoSchema:
+      // printable-ASCII only (no em-dash) and <=32 chars. Learned this by
+      // hitting a real ZodError from the deployed endpoint, not from docs.
+      serviceName: "Gradient Decisions",
     },
     hooks: {
       // Query-log write happens here (not inside the tool handler) so it

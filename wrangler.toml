@@ -10,7 +10,7 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "merchant-signals"
-database_id = "REPLACE_WITH_D1_DATABASE_ID" # `wrangler d1 create merchant-signals`
+database_id = "0964f469-94f4-4da1-94a7-6033d89ccb9a"
 
 # ---------------------------------------------------------------------------
 # Scheduled refresh worker: re-aggregates the merchant-signal store.
@@ -18,6 +18,15 @@ database_id = "REPLACE_WITH_D1_DATABASE_ID" # `wrangler d1 create merchant-signa
 # ---------------------------------------------------------------------------
 [triggers]
 crons = ["0 */4 * * *"]
+
+# ---------------------------------------------------------------------------
+# Custom domain. gradientdecisions.com is already a Cloudflare zone on this
+# account, so `custom_domain = true` provisions the DNS record + SSL cert
+# automatically on deploy — no manual CNAME needed.
+# ---------------------------------------------------------------------------
+[[routes]]
+pattern = "mcp.gradientdecisions.com"
+custom_domain = true
 
 [vars]
 # Public config only. Secrets (PAYOUT_ADDRESS, CDP_API_KEY) go through
