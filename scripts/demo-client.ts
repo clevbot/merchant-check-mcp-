@@ -52,9 +52,9 @@ async function main() {
   );
 
   const demoWallets = [
-    { label: "seeded 'trusted' demo wallet", address: "0x1111111111111111111111111111111111d111" },
-    { label: "seeded 'avoid' demo wallet", address: "0x2222222222222222222222222222222222d222" },
-    { label: "unseen wallet (no history)", address: "0x9999999999999999999999999999999999d999" },
+    { label: "seeded 'trusted' demo wallet", address: "0x11111111111111111111111111111111111111d1" },
+    { label: "seeded 'avoid' demo wallet", address: "0x22222222222222222222222222222222222222d2" },
+    { label: "unseen wallet (no history)", address: "0x99999999999999999999999999999999999999d9" },
   ];
 
   for (const { label, address } of demoWallets) {

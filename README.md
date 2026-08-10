@@ -32,7 +32,7 @@ paid `trusted`/`avoid` response:
 2. Fund it with Base Sepolia test USDC:
    [faucet.circle.com](https://faucet.circle.com) (select Base Sepolia).
 3. Re-run `npm run demo`. The two seeded wallets
-   (`0x1111...d111` / `0x2222...d222`, inserted directly into D1 for this
+   (`0x1111...11d1` / `0x2222...22d2`, inserted directly into D1 for this
    demo — see "Demo data" below) should come back `trusted` and `avoid`
    respectively, with a real settlement tx hash.
 
@@ -40,12 +40,17 @@ paid `trusted`/`avoid` response:
 
 `merchant_signals` currently has two synthetic rows I inserted directly via
 `wrangler d1 execute --remote`, so the demo has something to differentiate
-before a real indexer exists — clearly fake addresses (`0x1111...d111`,
-`0x2222...d222`), not real merchants. Delete them once real refresh-worker
-data exists:
+before a real indexer exists — clearly fake addresses
+(`0x11111111111111111111111111111111111111d1`,
+`0x22222222222222222222222222222222222222d2`), not real merchants. (An
+earlier version of these addresses was 38 hex characters instead of 40 —
+`isValidWalletAddress`'s own regex rejected them, so every demo call came
+back "not a valid EVM address" even though payment settled fine. Verify
+address length programmatically, not by eye — see git history.) Delete the
+demo rows once real refresh-worker data exists:
 ```bash
 wrangler d1 execute merchant-signals --remote --command \
-  "DELETE FROM merchant_signals WHERE wallet_address IN ('0x1111111111111111111111111111111111d111','0x2222222222222222222222222222222222d222')"
+  "DELETE FROM merchant_signals WHERE wallet_address IN ('0x11111111111111111111111111111111111111d1','0x22222222222222222222222222222222222222d2')"
 ```
 
 ## Known issue found and fixed during deployment
