@@ -20,12 +20,25 @@ database_id = "0964f469-94f4-4da1-94a7-6033d89ccb9a"
 crons = ["0 */4 * * *"]
 
 # ---------------------------------------------------------------------------
-# Custom domain. gradientdecisions.com is already a Cloudflare zone on this
+# Custom domains. gradientdecisions.com is already a Cloudflare zone on this
 # account, so `custom_domain = true` provisions the DNS record + SSL cert
 # automatically on deploy — no manual CNAME needed.
+#
+# mcp.* is the agent-facing paid MCP endpoint; the apex + www serve the
+# human-facing dashboard (same Worker, routed by pathname — see src/index.ts).
+# Confirmed via `dig` on 2026-08-10 that the apex and www had zero existing
+# DNS records before this was added — nothing pre-existing was overwritten.
 # ---------------------------------------------------------------------------
 [[routes]]
 pattern = "mcp.gradientdecisions.com"
+custom_domain = true
+
+[[routes]]
+pattern = "gradientdecisions.com"
+custom_domain = true
+
+[[routes]]
+pattern = "www.gradientdecisions.com"
 custom_domain = true
 
 [vars]

@@ -6,16 +6,19 @@ price-fairness read on a merchant, paid per-query via x402. See the original
 build brief for full product context; this file tracks what's actually built,
 what's stubbed, and what needs you before this goes further.
 
-## Status: deployed to testnet, payment flow verified end-to-end
+## Status: two live surfaces, one product
 
-Live at **https://mcp.gradientdecisions.com/mcp** (Base Sepolia / testnet
-USDC only — nothing here has touched mainnet or real funds). Verified
-working, in order: free `tools/list` discovery → `tools/call` on
-`check_merchant` correctly 402s → demo client auto-detects the 402, builds
-and signs an x402 payment, submits it → facilitator correctly evaluates and
-rejects it for insufficient balance (the demo wallet is an intentionally
-unfunded throwaway — see "Try it yourself" below to fund it and see a real
-paid response).
+- **Agents**: `https://mcp.gradientdecisions.com/mcp` — the paid
+  `check_merchant` MCP tool. Payment flow verified end-to-end (still on Base
+  Sepolia / testnet USDC — nothing here has touched mainnet or real funds):
+  free `tools/list` discovery → `tools/call` correctly 402s → demo client
+  builds and signs an x402 payment, submits it → facilitator settles it →
+  real tier comes back. See "Try it yourself" below.
+- **Humans**: `https://gradientdecisions.com` — a public dashboard of every
+  scored merchant (363 real wallets as of the last refresh, sourced from the
+  x402 Bazaar — see "Data source"), searchable and filterable by tier. Same
+  underlying data agents pay for via MCP, free to browse. Raw JSON at
+  `/api/wallets`.
 
 ## Try it yourself
 
@@ -38,20 +41,19 @@ paid `trusted`/`avoid` response:
 
 ## Demo data
 
-`merchant_signals` currently has two synthetic rows I inserted directly via
-`wrangler d1 execute --remote`, so the demo has something to differentiate
-before a real indexer exists — clearly fake addresses
+`merchant_signals` has two synthetic rows I inserted directly via
+`wrangler d1 execute --remote` — clearly fake addresses
 (`0x11111111111111111111111111111111111111d1`,
-`0x22222222222222222222222222222222222222d2`), not real merchants. (An
-earlier version of these addresses was 38 hex characters instead of 40 —
-`isValidWalletAddress`'s own regex rejected them, so every demo call came
-back "not a valid EVM address" even though payment settled fine. Verify
-address length programmatically, not by eye — see git history.) Delete the
-demo rows once real refresh-worker data exists:
-```bash
-wrangler d1 execute merchant-signals --remote --command \
-  "DELETE FROM merchant_signals WHERE wallet_address IN ('0x11111111111111111111111111111111111111d1','0x22222222222222222222222222222222222222d2')"
-```
+`0x22222222222222222222222222222222222222d2`), not real merchants, kept
+around because there's still no real `avoid` example (see "Still needed"
+below). They're marked `is_demo = 1` and excluded from the public dashboard
+and `/api/wallets` (`src/dashboard.ts` filters `WHERE is_demo = 0`) —
+`gradientdecisions.com` only ever shows real data — but `check_merchant`
+itself still sees them, so `npm run demo` keeps exercising all three tiers.
+(An earlier version of these two addresses was 38 hex characters instead of
+40 — `isValidWalletAddress`'s own regex rejected them, so every demo call
+came back "not a valid EVM address" even though payment settled fine. Verify
+address length programmatically, not by eye — see git history.)
 
 ## Known issue found and fixed during deployment
 
@@ -128,10 +130,17 @@ all.
 
 ## What's built
 
-- [`src/index.ts`](src/index.ts) — Worker entry point. Wires
-  `x402ResourceServer` (facilitator: `https://x402.org/facilitator`) +
-  `ExactEvmScheme` + `createPaymentWrapper` around the `check_merchant` tool,
-  served over `WebStandardStreamableHTTPServerTransport` at `/mcp`.
+- [`src/index.ts`](src/index.ts) — Worker entry point, routed by pathname
+  (not hostname, so it works on the workers.dev fallback URL too): `/mcp`
+  wires `x402ResourceServer` + `ExactEvmScheme` + `createPaymentWrapper`
+  around `check_merchant` over `WebStandardStreamableHTTPServerTransport`;
+  `/` and `/dashboard` serve the human dashboard; `/api/wallets` the same
+  data as JSON; `/refresh` the admin-gated manual refresh trigger.
+- [`src/dashboard.ts`](src/dashboard.ts) — public dashboard (served at
+  `gradientdecisions.com`, same Worker as the MCP endpoint at
+  `mcp.gradientdecisions.com`). Self-contained HTML/CSS/JS, no external
+  dependencies, light/dark aware, client-side search + tier filter. Excludes
+  `is_demo = 1` rows — see "Demo data".
 - [`src/tool.ts`](src/tool.ts) — `check_merchant` logic. Reads only from D1
   (`merchant_signals`, `price_observations`) — no chain access on the paid
   request path, per the brief's precomputed-store requirement.

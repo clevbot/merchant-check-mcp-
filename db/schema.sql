@@ -37,7 +37,15 @@ CREATE TABLE IF NOT EXISTS merchant_signals (
   tier                     TEXT,                  -- 'trusted' | 'caution' | 'avoid'
   reasons_json             TEXT,                  -- JSON array of 1-3 strings
 
-  refreshed_at             INTEGER NOT NULL       -- unix seconds, last aggregation run
+  refreshed_at             INTEGER NOT NULL,      -- unix seconds, last aggregation run
+
+  -- 1 for the two synthetic rows seeded for scripts/demo-client.ts (see
+  -- README "Demo data"). Real refresh-worker writes (BazaarDataSource)
+  -- never set this. Excluded from the public dashboard/API
+  -- (src/dashboard.ts) so gradientdecisions.com never shows fake data
+  -- alongside real merchants; still visible to check_merchant itself so the
+  -- demo script keeps working.
+  is_demo                  INTEGER NOT NULL DEFAULT 0
 );
 
 -- One row per (resource_type, price) quote a merchant has given, used for

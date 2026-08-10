@@ -9,6 +9,7 @@ import { checkMerchant } from "./tool";
 import { logQuery } from "./db/queries";
 import type { Env } from "./types";
 import { runRefresh } from "./refresh";
+import { getDashboardData, renderDashboardHtml, dashboardDataToJson } from "./dashboard";
 
 /**
  * Payment stack: @x402/core + @x402/evm + @x402/mcp — the official Coinbase/
@@ -128,8 +129,22 @@ export default {
       return new Response("ok", { status: 200 });
     }
 
+    // Human-facing dashboard (gradientdecisions.com) and agent-facing MCP
+    // endpoint (mcp.gradientdecisions.com) share this one Worker — routed
+    // by pathname rather than hostname so it also works from the
+    // workers.dev fallback URL and during local testing.
+    if (url.pathname === "/" || url.pathname === "/dashboard") {
+      const data = await getDashboardData(env);
+      return new Response(renderDashboardHtml(data), {
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=60" },
+      });
+    }
+    if (url.pathname === "/api/wallets") {
+      return dashboardDataToJson(await getDashboardData(env));
+    }
+
     if (url.pathname !== "/mcp") {
-      return new Response("Not found. MCP endpoint is at /mcp.", { status: 404 });
+      return new Response("Not found. MCP endpoint is at /mcp, dashboard at /.", { status: 404 });
     }
 
     const resourceServer = await getResourceServer(env);
