@@ -1,9 +1,7 @@
 import { scoreMerchant } from "../scoring";
 import type { Env, MerchantSignalRow } from "../types";
 import type { ChainDataSource, RawMerchantActivity } from "./indexer";
-import { CdpDataApiSource } from "./indexer";
-
-const CLUSTER_PAYER_THRESHOLD = 3; // placeholder heuristic, see aggregate()
+import { BazaarDataSource } from "./indexer";
 
 /**
  * Runs on the cron trigger in wrangler.toml. Pulls raw activity from the
@@ -28,10 +26,10 @@ export async function runRefresh(env: Env): Promise<void> {
   }
 }
 
-function getDataSource(env: Env): ChainDataSource {
-  // Real key isn't provisioned yet (see README) — this will throw when
-  // actually invoked, which is intentional until that's set up.
-  return new CdpDataApiSource(env.CDP_API_KEY ?? "", env.X402_NETWORK);
+function getDataSource(_env: Env): ChainDataSource {
+  // Public, no-key x402 Bazaar discovery catalog — see indexer.ts for scope
+  // and limitations (real data, but only for Bazaar-registered merchants).
+  return new BazaarDataSource();
 }
 
 function aggregate(
@@ -60,7 +58,7 @@ function aggregate(
     wallet_address: activity.walletAddress.toLowerCase(),
     first_seen_at: activity.firstSeenAt,
     wallet_age_days: walletAgeDays,
-    unique_payer_count: new Set(activity.uniquePayers.map((p) => p.toLowerCase())).size,
+    unique_payer_count: activity.uniquePayerCount,
     total_tx_count: activity.txCount,
     payer_cluster_flag: payerClusterFlag,
     completed_flow_count: activity.completedFlows,
@@ -77,6 +75,10 @@ function detectVelocityAnomalyStub(): number {
   return 0;
 }
 
+// Currently always evaluates to 0 for Bazaar-sourced activity —
+// BazaarDataSource never populates priceObservations (see indexer.ts class
+// comment for why). Kept as real logic, not deleted, so it activates for
+// free once a source that can populate priceObservations exists.
 function computePriceVarianceFlag(activity: RawMerchantActivity): number {
   const byResource = new Map<string, Set<number>>();
   for (const obs of activity.priceObservations) {

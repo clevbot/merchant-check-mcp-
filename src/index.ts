@@ -114,6 +114,20 @@ function createServer(env: Env, accepts: PaymentRequirements[], resourceServer: 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    // Manual trigger for the refresh worker (src/refresh) — gated by a
+    // shared-secret header, not just discoverability-through-obscurity.
+    // Exists because the cron trigger can't attach until the account has a
+    // workers.dev subdomain enabled (see README); useful afterwards too, as
+    // an on-demand refresh outside the 4-hour cadence.
+    if (url.pathname === "/refresh" && request.method === "POST") {
+      if (request.headers.get("X-Admin-Token") !== env.ADMIN_TOKEN || !env.ADMIN_TOKEN) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      await runRefresh(env);
+      return new Response("ok", { status: 200 });
+    }
+
     if (url.pathname !== "/mcp") {
       return new Response("Not found. MCP endpoint is at /mcp.", { status: 404 });
     }

@@ -66,12 +66,24 @@ from any docs — worth knowing if you add more resource metadata elsewhere.
 ## Remaining one-time account setup
 
 - **`workers.dev` subdomain**: the scheduled refresh-worker cron trigger
-  failed to attach on deploy — `wrangler` reports the account needs a
+  still fails to attach on deploy — `wrangler` reports the account needs a
   `workers.dev` subdomain enabled first (one-time, one click: open the
-  Workers section of the Cloudflare dashboard once). Not blocking anything
-  above since the refresh worker can't do anything real yet regardless (no
-  `CDP_API_KEY`, see "Data source" below) — re-run `wrangler deploy` after
-  enabling it to attach the cron trigger.
+  Workers section of the Cloudflare dashboard once). Not currently blocking
+  anything else — see "Manual refresh trigger" below for the workaround —
+  but re-run `wrangler deploy` after enabling it to attach the cron and stop
+  needing that workaround.
+
+## Manual refresh trigger
+
+Until the cron above is attached, `POST /refresh` (shared-secret header
+`X-Admin-Token`, value in `.env.demo` as `ADMIN_TOKEN`) runs the refresh
+worker on demand:
+```bash
+curl -X POST https://mcp.gradientdecisions.com/refresh \
+  -H "X-Admin-Token: $(grep ADMIN_TOKEN .env.demo | cut -d= -f2)"
+```
+Useful permanently too, even after the cron works, for an on-demand refresh
+outside the 4-hour cadence.
 
 ## Phase 0 resolution (stack compatibility)
 
@@ -130,7 +142,8 @@ all.
   every 4 hours, see `wrangler.toml`) that aggregates raw activity into
   `merchant_signals` rows.
 - [`src/refresh/indexer.ts`](src/refresh/indexer.ts) — `ChainDataSource`
-  interface. See "Data source" below — not wired to real data yet.
+  interface + `BazaarDataSource`, a real (not stubbed) implementation
+  against the public x402 Bazaar. See "Data source" below.
 - [`db/schema.sql`](db/schema.sql) — D1 schema. Applied to the live remote
   `merchant-signals` D1 database (`wrangler d1 execute --remote`).
 - [`scripts/backtest.ts`](scripts/backtest.ts) +
@@ -148,21 +161,40 @@ all.
   A real implementation needs to check whether payer wallets share funding
   sources or were created in a burst — out of scope until there's a real data
   source to check it against.
-- **`CdpDataApiSource`** (`src/refresh/indexer.ts`): both methods throw
-  `Error("not implemented")`. See "Data source" below.
+- **Wallet age (signal 1)** and **refunds (signal 4)**: `BazaarDataSource`
+  can't see these (see "Data source" below) — every Bazaar-sourced row has
+  `wallet_age_days = null` and `refund_count = 0`, so `scoreMerchant()` never
+  flags either for real data yet. Not fabricated as "fine", just unmeasured.
+- **Price variance (signal 5)**: same reason — `BazaarDataSource` never
+  populates `price_observations`, so `computePriceVarianceFlag()` always
+  returns 0 for real data. The logic itself is real and already wired up;
+  it activates for free once a source that can populate this exists.
 
-## Data source (proposed, not committed)
+## Data source
 
-You asked me to propose one. Default: **Coinbase's CDP Data API**, since
-you're already on a Coinbase/CDP surface for the facilitator
-(`x402.org/facilitator` is Coinbase-operated), so wallet-activity queries
-likely share auth/infra with something you're already calling. This is a
-placeholder behind the `ChainDataSource` interface — swap it for a subgraph,
-Dune, or your own RPC-log indexer by implementing the same two methods.
-**Needs a CDP API key before `runRefresh` can do anything real** — until
-then, the scheduled worker will throw on every tick (intentional — it's
-better than silently writing empty data). There's also a `FixtureDataSource`
-for local testing without live chain access.
+**`BazaarDataSource`** (`src/refresh/indexer.ts`) — real, not stubbed. Pulls
+from the **x402 Bazaar**, Coinbase's own facilitator discovery catalog
+(`GET https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources`) —
+public, no account or API key needed. Confirmed live: as of 2026-08-10 it
+has ~14,500 registered resources; a refresh run indexed 365 unique Base-
+mainnet merchant wallets from the first 2,000, giving real
+`total_tx_count` / `unique_payer_count` from Coinbase's own 30-day
+call-volume and unique-payer metrics per merchant.
+
+Real scope limits (see "What's deliberately stubbed" above for exactly which
+signals this affects): only covers merchants who've registered a resource on
+Bazaar, not every wallet that's ever received an x402 payment; no
+first-activity timestamp; no settlement-completion or refund visibility from
+a directory listing; Bazaar's "resource" (an API endpoint) doesn't map to
+the goods/services `resource_type` buckets `check_merchant`'s price-fairness
+check uses.
+
+Filling those gaps means either Coinbase's CDP wallet-history API (needs a
+free CDP account + API key at
+[portal.cdp.coinbase.com](https://portal.cdp.coinbase.com/access/api) —
+account creation has to be you, not me) or a custom chain indexer. Both are
+future work, not blocking anything currently running. `FixtureDataSource`
+is also available for local testing without live network access.
 
 ## Done vs. still needed
 
@@ -177,6 +209,16 @@ Done (testnet, this session):
   `wrangler.toml` auto-provisioned DNS + SSL since the zone was already on
   this Cloudflare account).
 - ✅ Two synthetic demo rows seeded into `merchant_signals` (see "Demo data").
+- ✅ Real data source wired and run: `BazaarDataSource` indexed 365 real Base
+  mainnet merchant wallets from the public x402 Bazaar (no account needed) —
+  97 scored `trusted`, 267 `caution`, plus the 1 synthetic `avoid` row.
+- ✅ Backtest passes against real data: 2/2 cases (`trusted` + `caution`,
+  both real Bazaar merchants — see `scripts/labeled-wallets.json`). `avoid`
+  is explicitly unvalidated — no real bad-actor source exists yet (see
+  `_avoid_bucket` in that file for why a thin-history wallet isn't a valid
+  stand-in).
+- ✅ Manual refresh trigger (`POST /refresh`) as a workaround until the cron
+  attaches — see "Manual refresh trigger" below.
 
 Still needed:
 1. **A real `PAYOUT_ADDRESS`** before mainnet — a Base wallet address *you*
@@ -185,15 +227,11 @@ Still needed:
    ```bash
    wrangler secret put PAYOUT_ADDRESS
    ```
-2. **A CDP API key** (or a different `ChainDataSource` implementation) —
-   without this, the refresh worker can't populate `merchant_signals` from
-   real chain data, and `check_merchant` will report "no transaction
-   history" for every wallet except the two synthetic demo rows.
-3. **The backtest** — fill in `scripts/labeled-wallets.json` with a handful
-   of known-legitimate and known-scam Base wallet addresses (public
-   scam-address lists / on-chain sleuthing communities, per the brief), run
-   the refresh worker once, then `npm run backtest`. Don't flip to charging
-   for real queries until this passes.
+2. **`workers.dev` subdomain** — one dashboard click, see above, to attach
+   the cron and retire the manual-trigger workaround.
+3. **A real `avoid` example** for the backtest — needs either a genuine
+   x402-specific bad-actor source (none found publicly — the tech's too new)
+   or enough real usage data over time to observe one organically.
 4. **Registry submission** — once you're ready for real agents to find it,
    submit the URL to MCP/agent tool registries. Explicit-permission action —
    ask before I'd do this even once mainnet is live.

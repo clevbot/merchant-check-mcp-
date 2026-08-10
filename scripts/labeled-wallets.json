@@ -1,5 +1,8 @@
 {
-  "_comment": "Hand-labeled backtest set (brief: 'Validation step — backtest before charging for it'). Fill in real addresses before running scripts/backtest.ts. Sources: public scam-address lists (e.g. Chainabuse, CryptoScamDB, Base's own flagged-address feeds if available) for 'avoid' examples; known high-volume legitimate merchants you can identify manually for 'trusted' examples. Left empty on purpose — do not fabricate addresses.",
-  "trusted": [],
-  "avoid": []
+  "_comment": "Hand-labeled backtest set (brief: 'Validation step — backtest before charging for it'). Real Base mainnet wallets pulled from merchant_signals after a live BazaarDataSource refresh on 2026-08-10 — not fabricated. Schema is {wallet, expectedTier} pairs rather than fixed trusted/avoid arrays so caution examples can be included honestly.",
+  "_avoid_bucket": "Deliberately empty. Bazaar (our only real data source right now) is a directory of registered, legitimate-enough-to-list services, not a scam registry — it has no examples of established bad actors. Labeling a thin-history wallet 'avoid' would be wrong ground truth: our own scoring.ts already classifies thin history as 'caution' (insufficient data), not 'avoid' (reserved for multiple red flags on an established wallet). Fill this in once a genuine x402-specific bad-actor source exists, or enough real usage data accumulates to observe one (see brief's roadmap: 'trained model once there's enough labeled outcome data').",
+  "cases": [
+    { "wallet": "0xd70d01c73b0c5f3246f2b55cce5ff1b41842ab5e", "expectedTier": "trusted", "note": "real Bazaar merchant, 195 calls / 72 unique payers (30d)" },
+    { "wallet": "0xc81a36fcdf531b6ed7ae8694220d59f9d3d0128b", "expectedTier": "caution", "note": "real Bazaar merchant, 7 calls / 2 unique payers (30d) — thin, not proven bad" }
+  ]
 }

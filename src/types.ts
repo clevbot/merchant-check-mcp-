@@ -5,8 +5,8 @@ export interface Env {
   X402_FACILITATOR_URL: string;
   /** Set via `wrangler secret put PAYOUT_ADDRESS` — see README "Before this can run". */
   PAYOUT_ADDRESS: string;
-  /** Optional — only needed once CdpDataApiSource (src/refresh/indexer.ts) is implemented. */
-  CDP_API_KEY?: string;
+  /** Set via `wrangler secret put ADMIN_TOKEN` — gates POST /refresh (see src/index.ts). */
+  ADMIN_TOKEN: string;
 }
 
 export type Tier = "trusted" | "caution" | "avoid";
