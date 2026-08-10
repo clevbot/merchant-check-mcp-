@@ -1,0 +1,29 @@
+{
+  "name": "merchant-check-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MCP server that shopping agents ping before purchase to check merchant trustworthiness and price fairness, monetized via x402 micropayments. Part of Gradient Decisions.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 execute merchant-signals --local --file=./db/schema.sql",
+    "db:migrate:remote": "wrangler d1 execute merchant-signals --remote --file=./db/schema.sql",
+    "backtest": "tsx scripts/backtest.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts/tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@x402/core": "^2.21.0",
+    "@x402/evm": "^2.21.0",
+    "@x402/mcp": "^2.21.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260804.1",
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.0.0"
+  }
+}

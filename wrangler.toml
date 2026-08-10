@@ -1,0 +1,32 @@
+name = "merchant-check-mcp"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ---------------------------------------------------------------------------
+# D1: precomputed merchant-signal store. check_merchant only ever reads from
+# this — no live chain lookups on the paid request path.
+# ---------------------------------------------------------------------------
+[[d1_databases]]
+binding = "DB"
+database_name = "merchant-signals"
+database_id = "REPLACE_WITH_D1_DATABASE_ID" # `wrangler d1 create merchant-signals`
+
+# ---------------------------------------------------------------------------
+# Scheduled refresh worker: re-aggregates the merchant-signal store.
+# Starting cadence: every 4 hours. Tune once real query volume exists.
+# ---------------------------------------------------------------------------
+[triggers]
+crons = ["0 */4 * * *"]
+
+[vars]
+# Public config only. Secrets (PAYOUT_ADDRESS, CDP_API_KEY) go through
+# `wrangler secret put`, not here.
+# Network is CAIP-2 format (@x402/core v2 protocol) — eip155:84532 is Base
+# Sepolia, eip155:8453 is Base mainnet. Do not switch to mainnet without
+# re-reading README "Going to mainnet" first.
+X402_NETWORK = "eip155:84532"
+X402_FACILITATOR_URL = "https://x402.org/facilitator"
+# PAYOUT_ADDRESS: set via `wrangler secret put PAYOUT_ADDRESS` (or move here
+# once it's a real, non-sensitive public receiving address you're ready to
+# commit to git). Left unset on purpose — see README "Before this can run".
