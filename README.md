@@ -335,3 +335,39 @@ as a placeholder `tier_returned` instead of the real tier — `@x402/mcp`'s
 `onAfterSettlement` hook doesn't have access to the tool handler's return
 value, only payment/settlement info. Fine for v1; see the comment in
 `src/index.ts` if this ever needs to carry the real tier.
+
+## category and price_fairness now actually reach agents
+
+Until 2026-08-11, `category` existed only in D1/the dashboard —
+`check_merchant`'s response never included it — and `price_fairness` was a
+permanent `"unknown"` stub for every real merchant, since nothing had ever
+populated `price_observations`. Both fixed: `category` is in the tool's
+output now, and `price_fairness` compares a merchant's price against real
+peers in its own category (not the old caller-supplied `resource_type`,
+which nothing ever populated data for — kept in the input schema for
+compatibility, documented as unused).
+
+Three real bugs surfaced getting this actually working end-to-end against
+production (each found via `wrangler tail` against a real failing request,
+not by inspection):
+1. Per-wallet D1 writes for price data (up to one INSERT per resource, some
+   wallets have 65+) blew through D1's 1000-queries-per-invocation cap
+   across ~370 wallets in one refresh. Fixed by restructuring to bulk
+   operations — one upfront category lookup instead of 370, price rows
+   accumulated in memory and written as ~20 chunked statements at the end.
+2. D1's real bound-parameter limit is ~100/statement, not SQLite's usual
+   999, and not stated in D1's own error message. `env.DB.batch()` sums
+   params across every statement in the call against that same ceiling —
+   batching multiple large inserts together doesn't dodge it, only fewer
+   total bound params per individual statement does.
+3. `getComparablePrices` sorted by `observed_at DESC` for recency, but
+   every row from one bulk refresh shares the exact same timestamp —
+   sorting a fully-tied key returns an arbitrary, non-representative
+   subset. A real merchant priced 50-500x below its category's true
+   median still came back `"high"`, because the `LIMIT 200` subset it
+   landed on was itself skewed low. Fixed with `ORDER BY RANDOM()`.
+
+Verified live: a real `data_api` merchant's category appears correctly in
+`check_merchant`'s output, and price_fairness resolves `fair`/`low`/`high`
+correctly around the real computed median (~$0.01, from 735 real
+comparable observations) for that category.
