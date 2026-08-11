@@ -40,18 +40,37 @@ case a listing's description changed, see `wrangler.toml`):
    value back. Response is validated against the fixed set before use —
    never trusted blindly; anything unparseable becomes `other` + logged.
 
-**Needs `ANTHROPIC_API_KEY`** (`wrangler secret put ANTHROPIC_API_KEY`) for
-pass 2 to do anything — without it, every non-rule-matched description
-lands straight in `other` (logged as `other_model_unavailable`, not
-silently guessed). Confirmed live on 2026-08-11 without a key: 375 real
-merchants → 101 rule-matched into a real category, 265 landed in `other`
-pending pass 2, 8 legitimately uncategorized (stale wallets delisted from
-Bazaar since the last refresh, untouched by design). Set the key and
-`POST /categorize` (admin-token gated, same pattern as `/refresh`) to
-categorize the backlog — `?force=true` re-categorizes everyone,
-`?limit=N` caps how many per call (default 200) since a full force run
-across hundreds of wallets could exceed a single Worker invocation's
-execution time.
+**`ANTHROPIC_API_KEY`** (`wrangler secret put ANTHROPIC_API_KEY`) powers
+pass 2 — without it, every non-rule-matched description lands straight in
+`other` (logged as `other_model_unavailable`, not silently guessed). Set
+and confirmed working on 2026-08-11. `POST /categorize` (admin-token
+gated, same pattern as `/refresh`) processes the backlog — `?force=true`
+re-categorizes everyone, `?limit=N` caps how many per call (default 200)
+since a full force run across hundreds of wallets could exceed a single
+Worker invocation's execution time (confirmed by batching 4×100 manually).
+
+Two real bugs found by actually running this against production, not by
+inspection — both fixed and redeployed:
+- Rule matching used plain substring checks, which false-matched
+  `"compute"` inside `"computer vision"` and would have matched a bare
+  `"search"` inside `"research"`. Two real listings ("Tavily Search", "Exa
+  /search endpoint") had been model-classified `content_generation` as a
+  result of falling through to pass 2 when they should've ruled confidently
+  to `data_api`. Fixed with word-boundary regex matching instead of
+  `.includes()`.
+- `runCategorization`'s `remaining` count was wrong for `force=true`: since
+  that mode's WHERE clause never excludes already-processed rows, a naive
+  recount just reported the total every time — caught by literally watching
+  it report the same number after 4 real batches that were each actually
+  processing different wallets (confirmed via `category_updated_at`
+  spread). Fixed by snapshotting a timestamp before each run and counting
+  rows still older than it.
+
+Current live distribution (2026-08-11, 375 real merchants): `data_api` 145,
+`other` 93 (genuinely ambiguous now, not "model unavailable"),
+`financial_data` 59, `content_generation` 45, `compute` 21, `storage` 4,
+8 legitimately uncategorized (stale, delisted from Bazaar since the last
+refresh — untouched by design, not a bug).
 
 ## Try it yourself
 
@@ -286,10 +305,9 @@ Still needed:
 4. **Registry submission** — once you're ready for real agents to find it,
    submit the URL to MCP/agent tool registries. Explicit-permission action —
    ask before I'd do this even once mainnet is live.
-5. **`ANTHROPIC_API_KEY`** for categorization pass 2 — 265 real merchants
-   are currently sitting in `other` for lack of it (see "Categorization").
-   `wrangler secret put ANTHROPIC_API_KEY`, then `POST /categorize` to work
-   through the backlog.
+
+✅ ~~`ANTHROPIC_API_KEY`~~ — set 2026-08-11, confirmed working, backlog
+processed. See "Categorization" for current distribution.
 
 ## Going to mainnet
 
