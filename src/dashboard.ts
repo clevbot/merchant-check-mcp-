@@ -101,8 +101,8 @@ export function renderDashboardHtml(data: DashboardData): string {
     .map((c) => `<option value="${c}">${c === "all" ? "All categories" : c.replace(/_/g, " ")}</option>`)
     .join("");
 
-  return `<title>Merchant Check — Gradient Decisions</title>
-<meta name="description" content="Live merchant trust tiers for x402 agent commerce, scored from on-chain signals.">
+  return `<title>x402 Merchant Check — Gradient Decisions</title>
+<meta name="description" content="Context for agentic buying decisions: live merchant trust tiers for x402 agent commerce, scored from on-chain signals.">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   :root {
@@ -181,11 +181,12 @@ export function renderDashboardHtml(data: DashboardData): string {
 </style>
 <div class="wrap">
   <header>
-    <h1>Merchant Check</h1>
+    <h1>x402 Merchant Check</h1>
     <p class="tagline">
-      Merchant trust tiers for autonomous agent commerce, scored from real on-chain and
-      x402 activity — not a certification, an algorithmic read of public signals. Same
-      data agents get via the <code class="small">check_merchant</code> MCP tool at
+      Context for agentic buying decisions: merchant trust tiers for autonomous agent
+      commerce, scored from real on-chain and x402 activity — not a certification, an
+      algorithmic read of public signals. Same data agents get via the
+      <code class="small">check_merchant</code> MCP tool at
       <code class="small">mcp.gradientdecisions.com</code> ($0.01/query via x402), free to
       browse here.
     </p>

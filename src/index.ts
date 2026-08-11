@@ -5,6 +5,7 @@ import { createFacilitatorConfig } from "@coinbase/x402";
 import type { Network, PaymentRequirements } from "@x402/core/types";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { createPaymentWrapper } from "@x402/mcp";
+import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { z } from "zod";
 import { checkMerchant } from "./tool";
 import { logQuery } from "./db/queries";
@@ -58,6 +59,14 @@ function getResourceServer(env: Env): Promise<x402ResourceServer> {
       );
       const server = new x402ResourceServer(facilitator);
       server.register(env.X402_NETWORK as Network, new ExactEvmScheme());
+      // Required for x402 Bazaar discovery to pick up check_merchant at all
+      // — without this, the per-tool discovery metadata declared on
+      // createPaymentWrapper below (extensions: declareDiscoveryExtension)
+      // is inert. Per Coinbase's own docs, listing itself needs no manifest
+      // or registration form: discovery metadata is submitted automatically
+      // the moment a real payment settles through the CDP facilitator with
+      // this extension registered — see README "x402 Bazaar listing".
+      server.registerExtension(bazaarResourceServerExtension);
       await server.initialize();
       return server;
     })();
@@ -86,12 +95,63 @@ function createServer(env: Env, accepts: PaymentRequirements[], resourceServer: 
   const paid = createPaymentWrapper(resourceServer, {
     accepts,
     resource: {
-      description: "Merchant risk/reputation and price-fairness check, backed by on-chain x402 history.",
+      description:
+        "Context for agentic buying decisions: merchant risk and price fairness, backed by " +
+        "real on-chain x402 settlement history.",
       // serviceName is validated against @x402/core's ResourceInfoSchema:
       // printable-ASCII only (no em-dash) and <=32 chars. Learned this by
       // hitting a real ZodError from the deployed endpoint, not from docs.
-      serviceName: "Gradient Decisions",
+      // Renamed from "Gradient Decisions" (the parent company) to the
+      // product name — "x402" in the name is deliberate for discoverability
+      // by anyone specifically searching for x402-compatible tools.
+      serviceName: "x402 Merchant Check",
     },
+    // x402 Bazaar discovery metadata — a tool call, not an HTTP route, is
+    // only listable at all because @x402/mcp exposes this hook (Bazaar's
+    // own published docs describe HTTP-route discovery only; found this via
+    // a JSDoc example inside @x402/mcp's own type declarations, not the
+    // docs site). description is written to answer Bazaar's stated
+    // requirement: tell an agent *when* to use this, not just what it does.
+    extensions: declareDiscoveryExtension({
+      toolName: "check_merchant",
+      description:
+        "Provides context for agentic buying decisions: call before completing an x402 " +
+        "purchase to check merchant risk and price fairness, using real on-chain settlement " +
+        "history. Returns a trust tier (trusted/caution/avoid) with reasons, the merchant's " +
+        "category, and — if a price is given — whether it's fair versus peers in that category.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          merchant_wallet_address: {
+            type: "string",
+            description: "EVM address of the merchant's receiving wallet",
+          },
+          price: {
+            type: "number",
+            description: "Quoted price in USD-equivalent, if checking fairness",
+          },
+        },
+        required: ["merchant_wallet_address"],
+      },
+      example: { merchant_wallet_address: "0xffc458db291b4abce020fe3de4f91f2770e537b1", price: 0.05 },
+      output: {
+        example: {
+          tier: "trusted",
+          reasons: ["Consistent signals across wallet age, payer diversity, and settlement history"],
+          price_fairness: "fair",
+          category: "data_api",
+        },
+        schema: {
+          type: "object",
+          properties: {
+            tier: { type: "string" },
+            reasons: { type: "array" },
+            price_fairness: { type: "string" },
+            category: { type: ["string", "null"] },
+          },
+        },
+      },
+    }),
     hooks: {
       // Query-log write happens here (not inside the tool handler) so it
       // only fires once payment has actually settled — a definitively-paid
@@ -110,10 +170,11 @@ function createServer(env: Env, accepts: PaymentRequirements[], resourceServer: 
 
   mcp.tool(
     "check_merchant",
-    "Checks merchant reliability and price fairness before purchase, using on-chain x402 " +
-      "transaction history. Returns a tier (trusted/caution/avoid) with reasons, the merchant's " +
-      "category (data_api/compute/content_generation/financial_data/storage/other, null if not " +
-      "yet classified), and — if price is given — a price-fairness assessment compared against " +
+    "x402 Merchant Check — provides context for agentic buying decisions. Checks merchant " +
+      "reliability and price fairness before purchase, using on-chain x402 transaction history. " +
+      "Returns a tier (trusted/caution/avoid) with reasons, the merchant's category " +
+      "(data_api/compute/content_generation/financial_data/storage/other, null if not yet " +
+      "classified), and — if price is given — a price-fairness assessment compared against " +
       "other merchants in the same category. $0.01 USDC per query, paid via x402.",
     {
       merchant_wallet_address: z.string().describe("EVM address of the merchant's receiving wallet"),
@@ -135,9 +196,20 @@ function createServer(env: Env, accepts: PaymentRequirements[], resourceServer: 
   return mcp;
 }
 
+// Domain-ownership proof for the official MCP Registry's HTTP auth method
+// (docs/authentication.mdx "HTTP Authentication") — lets mcp-publisher
+// authenticate as gradientdecisions.com without any GitHub OAuth. The
+// corresponding private key lives only in this session's scratchpad, never
+// committed; this public value is the whole point of being public.
+const MCP_REGISTRY_AUTH_RECORD = "v=MCPv1; k=ed25519; p=qoOP77GDo1BCijstKpdrVMh0ldDT5gh2ilyR4SslUtY=\n";
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    if (url.pathname === "/.well-known/mcp-registry-auth") {
+      return new Response(MCP_REGISTRY_AUTH_RECORD, { headers: { "Content-Type": "text/plain" } });
+    }
 
     // Manual trigger for the refresh worker (src/refresh) — gated by a
     // shared-secret header, not just discoverability-through-obscurity.
