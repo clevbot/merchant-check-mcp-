@@ -28,24 +28,51 @@ export async function runRefresh(env: Env): Promise<void> {
 
   const wallets = await source.listActiveMerchants(sinceSeconds);
 
+  // D1 caps a Worker invocation at 1000 total queries (paid plan), and each
+  // statement inside an env.DB.batch() call still counts individually
+  // against that — confirmed empirically (batching didn't dodge it, only
+  // fewer total statements did). One D1 call per wallet per concern doesn't
+  // scale past a few hundred wallets, so: one bulk category lookup instead
+  // of 375 individual SELECTs, and price observations are accumulated in
+  // memory across the whole loop and written as a handful of bulk
+  // statements at the end instead of per wallet — see
+  // bulkReplaceCategoryPriceObservations. upsertSignals/upsertPriceObservations
+  // stay per-wallet (1 statement each, upsertPriceObservations empty today)
+  // since that's exactly the ~1-2/wallet load this pipeline always ran at
+  // and is proven to fit comfortably under the cap.
+  const existingCategories = await getAllExistingCategories(env);
+  const priceRows: { wallet: string; category: string; priceAtomic: number }[] = [];
+
   for (const wallet of wallets) {
     const activity = await source.getMerchantActivity(wallet);
     const row = aggregate(activity, nowSeconds);
     const { tier, reasons } = scoreMerchant(row);
-    const needsCategorization = await isUncategorized(env, wallet);
     await upsertSignals(env, { ...row, tier, reasons_json: JSON.stringify(reasons) }, activity.description);
     await upsertPriceObservations(env, wallet, activity);
-    if (needsCategorization) {
-      await categorizeAndStoreOne(env, wallet, activity.description || null);
+
+    const walletLower = wallet.toLowerCase();
+    let category = existingCategories.get(walletLower) ?? null;
+    if (category === null) {
+      // First-time ingestion only — rare after the initial backlog is
+      // processed, so still fine as an individual D1 call per occurrence.
+      category = (await categorizeAndStoreOne(env, wallet, activity.description || null)).category;
+    }
+    if (category) {
+      for (const { priceAtomic } of activity.resourcePrices) {
+        priceRows.push({ wallet: walletLower, category, priceAtomic });
+      }
     }
   }
+
+  await bulkReplaceCategoryPriceObservations(env, priceRows);
 }
 
-async function isUncategorized(env: Env, wallet: string): Promise<boolean> {
-  const row = await env.DB.prepare("SELECT category FROM merchant_signals WHERE wallet_address = ?")
-    .bind(wallet.toLowerCase())
-    .first<{ category: string | null }>();
-  return !row || row.category === null;
+async function getAllExistingCategories(env: Env): Promise<Map<string, string | null>> {
+  const { results } = await env.DB.prepare("SELECT wallet_address, category FROM merchant_signals").all<{
+    wallet_address: string;
+    category: string | null;
+  }>();
+  return new Map(results.map((r) => [r.wallet_address, r.category]));
 }
 
 function getDataSource(_env: Env): ChainDataSource {
@@ -57,7 +84,11 @@ function getDataSource(_env: Env): ChainDataSource {
 function aggregate(
   activity: RawMerchantActivity,
   nowSeconds: number,
-): Omit<MerchantSignalRow, "tier" | "reasons_json"> {
+  // "category" is excluded here for the same reason "tier"/"reasons_json"
+  // are: it's written by a different step (src/categorize), not aggregate/
+  // upsertSignals. MerchantSignalRow represents the full D1 row shape for
+  // readers like tool.ts; writers Omit whatever columns they don't own.
+): Omit<MerchantSignalRow, "tier" | "reasons_json" | "category"> {
   const walletAgeDays =
     activity.firstSeenAt !== null ? (nowSeconds - activity.firstSeenAt) / 86400 : null;
 
@@ -117,7 +148,7 @@ function computePriceVarianceFlag(activity: RawMerchantActivity): number {
 
 async function upsertSignals(
   env: Env,
-  row: MerchantSignalRow,
+  row: Omit<MerchantSignalRow, "category">,
   bazaarDescription: string,
 ): Promise<void> {
   // Deliberately does NOT write category / category_source /
@@ -184,6 +215,61 @@ async function upsertPriceObservations(
        VALUES (?, ?, ?, ?, ?)`,
     )
       .bind(wallet.toLowerCase(), obs.resourceType, obs.priceAtomic, obs.payer, obs.at)
+      .run();
+  }
+}
+
+/**
+ * Cross-merchant price-fairness data (db/queries.ts getComparablePrices,
+ * src/tool.ts) for every wallet processed this run, written in one bulk
+ * pass rather than per wallet. resource_type holds each row's wallet's own
+ * `category`; payer_address is always NULL — that NULL is the marker
+ * distinguishing a category-snapshot row (this function) from a true
+ * per-payer observation row (upsertPriceObservations, currently always
+ * empty — see indexer.ts).
+ *
+ * History: the first two versions of this function did the delete+insert
+ * per wallet (optionally batched). Both failed against production, caught
+ * via a live wrangler tail session, not by inspection: individual
+ * statements per wallet hit D1's 1000-queries-per-invocation cap
+ * ("Too many API requests by single Worker invocation") across ~375
+ * wallets; batching per wallet didn't help, because each statement inside
+ * an env.DB.batch() call still counts individually against that cap — only
+ * *fewer total statements* does. This version deletes every snapshot row
+ * once (not once per wallet — everyone gets fresh rows this same run
+ * anyway) and inserts everyone's rows in ~20-100 chunked statements total,
+ * regardless of how many wallets or resources are involved.
+ */
+async function bulkReplaceCategoryPriceObservations(
+  env: Env,
+  rows: { wallet: string; category: string; priceAtomic: number }[],
+): Promise<void> {
+  await env.DB.prepare("DELETE FROM price_observations WHERE payer_address IS NULL").run();
+  if (rows.length === 0) return;
+
+  const now = Math.floor(Date.now() / 1000);
+  // D1's actual bound-parameter limit is ~100 per statement — not standard
+  // SQLite's 999, and not documented in D1's own error message (just
+  // "too many SQL variables at offset N", found the real number via
+  // real-world bug reports after two earlier chunk sizes both failed at a
+  // suspiciously identical offset regardless of chunk size, which in
+  // hindsight was because those attempts wrapped multiple statements in one
+  // env.DB.batch() call — the ~100 limit seems to apply to the combined
+  // params across a whole batch, not just one statement within it. This
+  // version issues one INSERT per chunk as an independent statement (no
+  // batch()), so 20 rows * 4 params/row = 80 stays safely under 100. With
+  // ~1,950 total rows across ~370 wallets that's ~100 INSERT statements —
+  // still trivial against the 1000-queries-per-invocation cap alongside
+  // the ~370 upsertSignals calls in the same run.
+  const CHUNK_SIZE = 20;
+  for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+    const chunk = rows.slice(i, i + CHUNK_SIZE);
+    const placeholders = chunk.map(() => "(?, ?, ?, NULL, ?)").join(", ");
+    await env.DB.prepare(
+      `INSERT INTO price_observations (wallet_address, resource_type, price_atomic, payer_address, observed_at)
+       VALUES ${placeholders}`,
+    )
+      .bind(...chunk.flatMap(({ wallet, category, priceAtomic }) => [wallet, category, priceAtomic, now]))
       .run();
   }
 }

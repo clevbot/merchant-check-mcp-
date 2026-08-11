@@ -20,13 +20,20 @@
  *   directory listing -> signals 3 (partially) and 4 stay at 0, meaning
  *   scoreMerchant() can't flag either for Bazaar-sourced rows.
  * - Bazaar's "resource" is an API endpoint (e.g. a weather API), which
- *   doesn't map to the caller-supplied `resource_type` buckets check_merchant
- *   uses for price-fairness (that's about goods/services categories, not API
- *   call types) -> priceObservations stays empty from this source.
+ *   doesn't map to a caller-supplied goods/services resource_type ->
+ *   priceObservations (the true per-payer signal-5 field) stays empty from
+ *   this source; there's no way to tell if a specific payer was quoted a
+ *   different price than another. What Bazaar *does* give us is each
+ *   resource's single currently-advertised price — see resourcePrices
+ *   below, populated since 2026-08-11 and used for cross-merchant
+ *   price-fairness comparison keyed by src/categorize's `category` instead
+ *   (see src/refresh/index.ts upsertCategoryPriceObservations).
  *
- * Filling those gaps needs either the CDP wallet-history API (account
- * required — see README "Data source") or a custom chain indexer. Both are
- * future work, not blocked on anything here.
+ * Filling the remaining gaps (signal 1 wallet age, signals 3/4 settlement/
+ * refund visibility, true per-payer price variance for signal 5) needs
+ * either the CDP wallet-history API (account required — see README "Data
+ * source") or a custom chain indexer. Both future work, not blocked on
+ * anything here.
  */
 
 const BAZAAR_DISCOVERY_URL = "https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources";
@@ -58,6 +65,15 @@ export interface RawMerchantActivity {
    * lands in 'other', gets flagged — see categorizeDescription).
    */
   description: string;
+  /**
+   * Each Base-mainnet resource this wallet backs, with its currently
+   * advertised price in atomic USDC units (6 decimals). Used for
+   * cross-merchant price-fairness comparison, bucketed by category — not
+   * the same thing as priceObservations above (which is per-*payer*
+   * variation for the same resource; this is per-*resource* snapshot,
+   * refreshed every cycle, no payer identity attached).
+   */
+  resourcePrices: { resource: string; priceAtomic: number }[];
 }
 
 export interface ChainDataSource {
@@ -69,6 +85,8 @@ export interface ChainDataSource {
 interface BazaarAccept {
   network: string;
   payTo: string;
+  scheme?: string;
+  amount?: string;
 }
 interface BazaarItem {
   resource: string;
@@ -137,6 +155,16 @@ export class BazaarDataSource implements ChainDataSource {
       .filter(Boolean)
       .join(". ");
 
+    // One canonical price per resource: prefer the "exact" scheme (the one
+    // check_merchant's own payment flow uses) if the resource offers it,
+    // else whatever Base-mainnet option comes first. A resource with no
+    // parseable amount contributes nothing here rather than a bogus 0.
+    const baseAccepts = (item.accepts ?? []).filter((a) => a.network === BASE_MAINNET_NETWORK && a.amount);
+    const chosenAccept = baseAccepts.find((a) => a.scheme === "exact") ?? baseAccepts[0];
+    const priceAtomic = chosenAccept ? Number(chosenAccept.amount) : NaN;
+    const resourcePriceEntry =
+      Number.isFinite(priceAtomic) && priceAtomic >= 0 ? [{ resource: item.resource, priceAtomic }] : [];
+
     for (const wallet of basePayTos) {
       const existing = this.cache.get(wallet);
       if (existing) {
@@ -153,6 +181,7 @@ export class BazaarDataSource implements ChainDataSource {
             ? `${existing.description}. ${descriptionPart}`
             : descriptionPart;
         }
+        existing.resourcePrices.push(...resourcePriceEntry);
       } else {
         this.cache.set(wallet, {
           walletAddress: wallet,
@@ -166,6 +195,7 @@ export class BazaarDataSource implements ChainDataSource {
           refundEligibleVolume: 0,
           priceObservations: [],
           description: descriptionPart,
+          resourcePrices: [...resourcePriceEntry],
         });
       }
     }

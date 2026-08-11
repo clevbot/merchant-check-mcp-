@@ -17,25 +17,38 @@ export async function getMerchantSignals(
   return row ?? null;
 }
 
-// TODO(price-fairness-by-category): once price_observations has real volume
-// (currently always empty — see src/refresh/indexer.ts BazaarDataSource
-// class comment), join against merchant_signals.category here and filter
-// comparable prices to the same category as the merchant being scored,
-// not the whole dataset. merchant_signals.category is populated and
-// queryable now (see src/categorize) specifically so this join is ready to
-// write whenever price_observations has data to join against. Deliberately
-// not wired up yet — no real price data exists to validate it against.
+/**
+ * Comparable prices for price-fairness (src/tool.ts). `category` is the
+ * merchant's own src/categorize category, not a caller-supplied string —
+ * price_observations.resource_type holds category values written by
+ * src/refresh/index.ts upsertCategoryPriceObservations (payer_address IS
+ * NULL rows specifically; see db/schema.sql for the other kind of row this
+ * table can hold). Implemented 2026-08-11 once category gave this function
+ * an actual bucket to compare within — previously always returned "unknown"
+ * since nothing populated price_observations at all.
+ *
+ * ORDER BY RANDOM() rather than ORDER BY observed_at DESC: every row from a
+ * given bulk refresh shares the exact same observed_at (they're all written
+ * in one pass — see upsertCategoryPriceObservations), so sorting by it isn't
+ * sorting by anything at all with a fully-tied key, and LIMIT then returns
+ * some arbitrary but *not* representative subset of rows. Caught this live:
+ * a real merchant priced far below its category's true median still came
+ * back price_fairness "high", because the LIMIT 200 subset it happened to
+ * compare against was itself skewed low. A random sample is representative
+ * regardless of how many rows share a timestamp, and stays correct even
+ * once refresh timing gives observed_at genuine spread in the future.
+ */
 export async function getComparablePrices(
   env: Env,
-  resourceType: string,
+  category: string,
   excludeWallet: string,
 ): Promise<number[]> {
   const { results } = await env.DB.prepare(
     `SELECT price_atomic FROM price_observations
-     WHERE resource_type = ? AND wallet_address != ?
-     ORDER BY observed_at DESC LIMIT 200`,
+     WHERE resource_type = ? AND wallet_address != ? AND payer_address IS NULL
+     ORDER BY RANDOM() LIMIT 200`,
   )
-    .bind(resourceType, excludeWallet.toLowerCase())
+    .bind(category, excludeWallet.toLowerCase())
     .all<{ price_atomic: number }>();
   return results.map((r) => r.price_atomic);
 }

@@ -79,13 +79,15 @@ async function logReview(
  * caller already has in hand — this is what the trust-signal refresh
  * (src/refresh/index.ts) calls inline for a wallet it's ingesting for the
  * first time (category IS NULL), so no extra Bazaar fetch or D1 read is
- * needed for that path.
+ * needed for that path. Returns the result so the caller (e.g. runRefresh,
+ * writing category-bucketed price observations right after) has the
+ * category immediately without a second D1 round trip.
  */
 export async function categorizeAndStoreOne(
   env: Env,
   walletAddress: string,
   description: string | null,
-): Promise<void> {
+): Promise<CategoryResult> {
   const result = await categorizeDescription(description ?? "", env);
   const now = Math.floor(Date.now() / 1000);
 
@@ -98,6 +100,7 @@ export async function categorizeAndStoreOne(
     .run();
 
   await logReview(env, walletAddress, description, result);
+  return result;
 }
 
 export interface RunCategorizationOptions {

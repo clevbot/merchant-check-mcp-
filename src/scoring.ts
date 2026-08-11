@@ -23,7 +23,11 @@ const HIGH_ABANDON_RATE = 0.35;
  * one of the six signals in db/schema.sql — do not add a flag here without
  * a corresponding, named signal.
  */
-export function scoreMerchant(row: Omit<MerchantSignalRow, "tier" | "reasons_json">): ScoringResult {
+// "category" excluded deliberately: this function is pure trust-signal
+// scoring and stays that way — category is a separate, additive concern
+// (src/categorize) that never feeds tier/reasons. Not touched by the
+// category/price-fairness work, just kept type-consistent with it.
+export function scoreMerchant(row: Omit<MerchantSignalRow, "tier" | "reasons_json" | "category">): ScoringResult {
   const reasons: string[] = [];
 
   if (row.total_tx_count < MIN_TX_FOR_CONFIDENCE) {

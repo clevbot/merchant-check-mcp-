@@ -102,8 +102,21 @@ CREATE INDEX IF NOT EXISTS idx_category_review_created
   ON category_review_log (created_at DESC);
 
 -- One row per (resource_type, price) quote a merchant has given, used for
--- price-fairness comparison. Populated by the refresh worker from x402
--- payment-required responses observed on-chain/via the facilitator.
+-- price-fairness comparison (src/tool.ts, db/queries.ts getComparablePrices).
+-- Two distinct kinds of row share this table, told apart by payer_address:
+--   - payer_address IS NULL: a category-snapshot row (src/refresh/index.ts
+--     upsertCategoryPriceObservations). resource_type holds the wallet's
+--     own src/categorize `category` (data_api, compute, ...), price_atomic
+--     is that resource's currently-advertised price from Bazaar. Replaced
+--     wholesale every refresh cycle (old rows for a wallet are deleted
+--     before new ones are inserted) — always a current snapshot, not a
+--     history. This is what price_fairness actually compares against today.
+--   - payer_address IS NOT NULL: a true per-payer observation — what a
+--     *specific* payer was actually quoted, for signal 5 (price
+--     discrimination) in src/scoring.ts. Nothing currently writes these;
+--     BazaarDataSource has no visibility into per-payer pricing, only the
+--     single currently-advertised price. Reserved for a future indexer
+--     that can see real quote-level data.
 CREATE TABLE IF NOT EXISTS price_observations (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   wallet_address  TEXT NOT NULL,

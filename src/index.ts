@@ -96,16 +96,20 @@ function createServer(env: Env, accepts: PaymentRequirements[], resourceServer: 
   mcp.tool(
     "check_merchant",
     "Checks merchant reliability and price fairness before purchase, using on-chain x402 " +
-      "transaction history. Returns a tier (trusted/caution/avoid) with reasons, and — if a " +
-      "price and resource_type are given — a price-fairness assessment. $0.01 USDC per query, " +
-      "paid via x402.",
+      "transaction history. Returns a tier (trusted/caution/avoid) with reasons, the merchant's " +
+      "category (data_api/compute/content_generation/financial_data/storage/other, null if not " +
+      "yet classified), and — if price is given — a price-fairness assessment compared against " +
+      "other merchants in the same category. $0.01 USDC per query, paid via x402.",
     {
       merchant_wallet_address: z.string().describe("EVM address of the merchant's receiving wallet"),
       price: z.number().optional().describe("Quoted price in USD-equivalent, if checking fairness"),
       resource_type: z
         .string()
         .optional()
-        .describe("Category bucket for the resource being priced (required if price is given)"),
+        .describe(
+          "Deprecated, accepted but unused — price-fairness now compares against the merchant's " +
+            "own on-chain-derived category automatically, no need to supply this.",
+        ),
     },
     paid(async ({ merchant_wallet_address, price, resource_type }) => {
       const result = await checkMerchant(env, { merchant_wallet_address, price, resource_type });
