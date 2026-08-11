@@ -128,6 +128,15 @@ export async function runCategorization(
   options: RunCategorizationOptions = {},
 ): Promise<RunCategorizationResult> {
   const limit = options.limit ?? DEFAULT_LIMIT;
+  // Captured before processing: for force mode, "remaining" counts rows
+  // whose category_updated_at is still older than this — i.e. not yet
+  // touched by *this* sweep. Without this, force mode's WHERE clause never
+  // excludes already-categorized rows, so a naive post-loop recount would
+  // just report the total every time regardless of progress (caught this
+  // via a live 4-batch run where it misleadingly reported the same number
+  // after every batch despite each one processing a different, real set of
+  // rows — the processing was correct, only this count was wrong).
+  const sweepStartedAt = Math.floor(Date.now() / 1000);
 
   const where = options.force
     ? "WHERE is_demo = 0 AND bazaar_description IS NOT NULL"
@@ -146,9 +155,15 @@ export async function runCategorization(
     await categorizeAndStoreOne(env, row.wallet_address, row.bazaar_description);
   }
 
-  const { results: remainingRows } = await env.DB.prepare(`SELECT COUNT(*) as n FROM merchant_signals ${where}`).all<{
-    n: number;
-  }>();
+  const remainingWhere = options.force
+    ? `${where} AND (category_updated_at IS NULL OR category_updated_at < ?)`
+    : where; // non-force: category IS NULL already excludes anything this call just categorized
+
+  const remainingQuery = env.DB.prepare(`SELECT COUNT(*) as n FROM merchant_signals ${remainingWhere}`);
+  const { results: remainingRows } = await (options.force
+    ? remainingQuery.bind(sweepStartedAt)
+    : remainingQuery
+  ).all<{ n: number }>();
 
   return { processed: rows.length, remaining: remainingRows[0]?.n ?? 0 };
 }

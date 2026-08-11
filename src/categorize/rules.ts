@@ -45,7 +45,7 @@ const KEYWORDS: Record<Exclude<MerchantCategory, "other">, string[]> = {
     "exchange rate",
     "sports score",
     "news feed",
-    "search api",
+    "search", // safe as a bare word now that matching is word-boundary, not substring — see containsKeyword
     "faucet",
   ],
   compute: [
@@ -133,20 +133,35 @@ const KEYWORDS: Record<Exclude<MerchantCategory, "other">, string[]> = {
   ],
 };
 
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Word-boundary match, not plain substring — plain `.includes()` was
+ * matching "compute" inside "computer vision" and would have matched bare
+ * "search" inside "research". \b works fine here since every keyword is
+ * plain words/phrases (spaces, hyphens) with no other regex metacharacters
+ * that would need different boundary handling.
+ */
+function containsKeyword(haystack: string, keyword: string): boolean {
+  return new RegExp(`\\b${escapeRegex(keyword.toLowerCase())}\\b`).test(haystack);
+}
+
 /**
  * Returns a confident rule-based category, or null if the rule pass can't
  * confidently place it (zero or multiple category matches) — the caller
  * should fall through to the model in that case.
  */
 export function categorizeByRules(text: string): MerchantCategory | null {
-  const haystack = ` ${text.toLowerCase()} `;
+  const haystack = text.toLowerCase();
   const matched: MerchantCategory[] = [];
 
   for (const [category, keywords] of Object.entries(KEYWORDS) as [
     Exclude<MerchantCategory, "other">,
     string[],
   ][]) {
-    if (keywords.some((kw) => haystack.includes(kw.toLowerCase()))) {
+    if (keywords.some((kw) => containsKeyword(haystack, kw))) {
       matched.push(category);
     }
   }
