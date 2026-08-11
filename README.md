@@ -15,10 +15,43 @@ what's stubbed, and what needs you before this goes further.
   builds and signs an x402 payment, submits it → facilitator settles it →
   real tier comes back. See "Try it yourself" below.
 - **Humans**: `https://gradientdecisions.com` — a public dashboard of every
-  scored merchant (363 real wallets as of the last refresh, sourced from the
-  x402 Bazaar — see "Data source"), searchable and filterable by tier. Same
-  underlying data agents pay for via MCP, free to browse. Raw JSON at
-  `/api/wallets`.
+  scored merchant (375 real wallets as of the last refresh, sourced from the
+  x402 Bazaar — see "Data source"), searchable and filterable by tier and by
+  category (see "Categorization"). Same underlying data agents pay for via
+  MCP, free to browse. Raw JSON at `/api/wallets`.
+
+## Categorization
+
+Additive to trust-tier scoring, doesn't touch `src/scoring.ts`. Every
+merchant gets a `category` from a fixed six-value set
+(`src/categorize/types.ts`: `data_api`, `compute`, `content_generation`,
+`financial_data`, `storage`, `other`) — never invented outside that set;
+anything the pipeline can't confidently place lands in `other` and is
+logged to `category_review_log` for a spot-check, not guessed.
+
+Two passes, run once per wallet on first ingestion (not the 4-hour
+trust-signal cadence — a separate monthly cron force-re-runs everyone in
+case a listing's description changed, see `wrangler.toml`):
+1. **Rules** (`src/categorize/rules.ts`) — keyword match against the Bazaar
+   listing text. Only counts as confident if exactly one category matches;
+   zero or multiple matches (ambiguous) fall through to pass 2.
+2. **Model** (`src/categorize/model.ts`) — Claude Haiku (`claude-haiku-4-5-20251001`)
+   given the fixed category list and the description, asked for exactly one
+   value back. Response is validated against the fixed set before use —
+   never trusted blindly; anything unparseable becomes `other` + logged.
+
+**Needs `ANTHROPIC_API_KEY`** (`wrangler secret put ANTHROPIC_API_KEY`) for
+pass 2 to do anything — without it, every non-rule-matched description
+lands straight in `other` (logged as `other_model_unavailable`, not
+silently guessed). Confirmed live on 2026-08-11 without a key: 375 real
+merchants → 101 rule-matched into a real category, 265 landed in `other`
+pending pass 2, 8 legitimately uncategorized (stale wallets delisted from
+Bazaar since the last refresh, untouched by design). Set the key and
+`POST /categorize` (admin-token gated, same pattern as `/refresh`) to
+categorize the backlog — `?force=true` re-categorizes everyone,
+`?limit=N` caps how many per call (default 200) since a full force run
+across hundreds of wallets could exceed a single Worker invocation's
+execution time.
 
 ## Try it yourself
 
@@ -253,6 +286,10 @@ Still needed:
 4. **Registry submission** — once you're ready for real agents to find it,
    submit the URL to MCP/agent tool registries. Explicit-permission action —
    ask before I'd do this even once mainnet is live.
+5. **`ANTHROPIC_API_KEY`** for categorization pass 2 — 265 real merchants
+   are currently sitting in `other` for lack of it (see "Categorization").
+   `wrangler secret put ANTHROPIC_API_KEY`, then `POST /categorize` to work
+   through the backlog.
 
 ## Going to mainnet
 

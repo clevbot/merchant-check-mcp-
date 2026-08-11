@@ -1,5 +1,6 @@
 import type { Env } from "./types";
 import { BASE_MAINNET_NETWORK } from "./refresh/indexer";
+import { CATEGORIES } from "./categorize/types";
 
 interface DashboardRow {
   wallet_address: string;
@@ -9,6 +10,8 @@ interface DashboardRow {
   unique_payer_count: number;
   wallet_age_days: number | null;
   refreshed_at: number;
+  /** Null until src/categorize has run for this wallet at least once. */
+  category: string | null;
 }
 
 interface DashboardData {
@@ -27,7 +30,7 @@ export async function getDashboardData(env: Env): Promise<DashboardData> {
   // rather than collapsing to one.
   const { results } = await env.DB.prepare(
     `SELECT wallet_address, tier, reasons_json, total_tx_count, unique_payer_count,
-            wallet_age_days, refreshed_at
+            wallet_age_days, refreshed_at, category
      FROM merchant_signals
      WHERE is_demo = 0 AND network = ?
      ORDER BY total_tx_count DESC
@@ -82,15 +85,21 @@ export function renderDashboardHtml(data: DashboardData): string {
   const rowsHtml = rows
     .map((r) => {
       const reasons: string[] = r.reasons_json ? JSON.parse(r.reasons_json) : [];
-      return `<tr data-tier="${r.tier}" data-address="${escapeHtml(r.wallet_address)}">
+      const category = r.category ?? "uncategorized";
+      return `<tr data-tier="${r.tier}" data-category="${category}" data-address="${escapeHtml(r.wallet_address)}">
         <td><code class="addr" title="${escapeHtml(r.wallet_address)}">${truncateAddress(r.wallet_address)}</code></td>
         <td><span class="badge badge-${r.tier}">${r.tier}</span></td>
+        <td><span class="pill">${escapeHtml(category.replace(/_/g, " "))}</span></td>
         <td class="num">${r.total_tx_count.toLocaleString()}</td>
         <td class="num">${r.unique_payer_count.toLocaleString()}</td>
         <td class="reasons">${reasons.map((x) => `<span class="reason">${escapeHtml(x)}</span>`).join("")}</td>
       </tr>`;
     })
     .join("\n");
+
+  const categoryOptions = ["all", ...CATEGORIES, "uncategorized"]
+    .map((c) => `<option value="${c}">${c === "all" ? "All categories" : c.replace(/_/g, " ")}</option>`)
+    .join("");
 
   return `<title>Merchant Check — Gradient Decisions</title>
 <meta name="description" content="Live merchant trust tiers for x402 agent commerce, scored from on-chain signals.">
@@ -152,6 +161,14 @@ export function renderDashboardHtml(data: DashboardData): string {
   .badge-caution { background: var(--caution-bg); color: var(--caution); }
   .badge-avoid { background: var(--avoid-bg); color: var(--avoid); }
   .reasons { max-width: 320px; }
+  .pill {
+    display: inline-block; padding: .1rem .5rem; border-radius: 6px; font-size: .76rem;
+    text-transform: capitalize; background: var(--bg); border: 1px solid var(--border); color: var(--text-dim);
+  }
+  select#category-filter {
+    padding: .45rem .7rem; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); font-size: .82rem;
+  }
   .reason {
     display: inline-block; font-size: .74rem; color: var(--text-dim); background: var(--bg);
     border: 1px solid var(--border); border-radius: 6px; padding: .1rem .4rem; margin: .1rem .2rem .1rem 0;
@@ -192,11 +209,12 @@ export function renderDashboardHtml(data: DashboardData): string {
     <button class="filter-btn" data-tier="trusted">Trusted</button>
     <button class="filter-btn" data-tier="caution">Caution</button>
     <button class="filter-btn" data-tier="avoid">Avoid</button>
+    <select id="category-filter">${categoryOptions}</select>
   </div>
 
   <div class="overflow">
     <table id="tbl">
-      <thead><tr><th>Wallet</th><th>Tier</th><th class="num">Calls (30d)</th><th class="num">Unique payers</th><th>Reasons</th></tr></thead>
+      <thead><tr><th>Wallet</th><th>Tier</th><th>Category</th><th class="num">Calls (30d)</th><th class="num">Unique payers</th><th>Reasons</th></tr></thead>
       <tbody>${rowsHtml || ""}</tbody>
     </table>
     <p class="empty" id="empty" style="display:none">No wallets match.</p>
@@ -213,17 +231,20 @@ export function renderDashboardHtml(data: DashboardData): string {
 <script>
   const search = document.getElementById('search');
   const buttons = document.querySelectorAll('.filter-btn');
+  const categoryFilter = document.getElementById('category-filter');
   const rows = [...document.querySelectorAll('#tbl tbody tr')];
   const empty = document.getElementById('empty');
   let activeTier = 'all';
 
   function applyFilter() {
     const q = search.value.trim().toLowerCase();
+    const activeCategory = categoryFilter.value;
     let visible = 0;
     for (const row of rows) {
       const tierOk = activeTier === 'all' || row.dataset.tier === activeTier;
+      const categoryOk = activeCategory === 'all' || row.dataset.category === activeCategory;
       const searchOk = !q || row.dataset.address.toLowerCase().includes(q);
-      const show = tierOk && searchOk;
+      const show = tierOk && categoryOk && searchOk;
       row.style.display = show ? '' : 'none';
       if (show) visible++;
     }
@@ -231,6 +252,7 @@ export function renderDashboardHtml(data: DashboardData): string {
   }
 
   search.addEventListener('input', applyFilter);
+  categoryFilter.addEventListener('change', applyFilter);
   buttons.forEach((btn) => btn.addEventListener('click', () => {
     buttons.forEach((b) => b.classList.remove('active'));
     btn.classList.add('active');

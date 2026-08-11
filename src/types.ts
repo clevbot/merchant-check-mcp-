@@ -5,8 +5,15 @@ export interface Env {
   X402_FACILITATOR_URL: string;
   /** Set via `wrangler secret put PAYOUT_ADDRESS` — see README "Before this can run". */
   PAYOUT_ADDRESS: string;
-  /** Set via `wrangler secret put ADMIN_TOKEN` — gates POST /refresh (see src/index.ts). */
+  /** Set via `wrangler secret put ADMIN_TOKEN` — gates POST /refresh and POST /categorize (see src/index.ts). */
   ADMIN_TOKEN: string;
+  /**
+   * Set via `wrangler secret put ANTHROPIC_API_KEY` — powers the pass-2
+   * model fallback in src/categorize/model.ts. Optional: unset means every
+   * description the rule pass can't confidently place lands in 'other'
+   * (logged for review) instead of erroring — see README "Categorization".
+   */
+  ANTHROPIC_API_KEY?: string;
 }
 
 export type Tier = "trusted" | "caution" | "avoid";

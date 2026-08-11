@@ -9,6 +9,7 @@ import { checkMerchant } from "./tool";
 import { logQuery } from "./db/queries";
 import type { Env } from "./types";
 import { runRefresh } from "./refresh";
+import { runCategorization } from "./categorize";
 import { getDashboardData, renderDashboardHtml, dashboardDataToJson } from "./dashboard";
 
 /**
@@ -30,6 +31,9 @@ import { getDashboardData, renderDashboardHtml, dashboardDataToJson } from "./da
  * directly, and mixing it with `agents`' own McpServer wrapper wasn't worth
  * the risk of an unproven combination in payment-handling code.
  */
+
+/** Must match the second cron expression in wrangler.toml's [triggers]. */
+const MONTHLY_CATEGORIZATION_CRON = "0 0 1 * *";
 
 let resourceServerPromise: Promise<x402ResourceServer> | null = null;
 
@@ -129,6 +133,29 @@ export default {
       return new Response("ok", { status: 200 });
     }
 
+    // Manual trigger for src/categorize — deliberately separate from
+    // /refresh (requirement 6: categorization runs on its own, much slower
+    // cadence, not the 4-hour trust-signal schedule). Without ?force=true,
+    // only categorizes wallets that don't have one yet (catch-up/backfill,
+    // and the normal path since first-ingestion categorization already
+    // happens inline in runRefresh — see src/refresh/index.ts). With
+    // ?force=true, re-categorizes everyone (the monthly cron below), oldest
+    // category_updated_at first, capped at `limit` per call — call again to
+    // continue a large force run across multiple invocations.
+    if (url.pathname === "/categorize" && request.method === "POST") {
+      if (request.headers.get("X-Admin-Token") !== env.ADMIN_TOKEN || !env.ADMIN_TOKEN) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      const force = url.searchParams.get("force") === "true";
+      const limitParam = url.searchParams.get("limit");
+      const limit = limitParam ? Number(limitParam) : undefined;
+      const result = await runCategorization(env, { force, limit });
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
     // Human-facing dashboard (gradientdecisions.com) and agent-facing MCP
     // endpoint (mcp.gradientdecisions.com) share this one Worker — routed
     // by pathname rather than hostname so it also works from the
@@ -160,7 +187,14 @@ export default {
     return transport.handleRequest(request);
   },
 
-  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(runRefresh(env));
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    // Two cron expressions in wrangler.toml drive this one handler — branch
+    // on which fired rather than always doing both, since categorization is
+    // deliberately not on the trust-signal refresh's 4-hour cadence.
+    if (controller.cron === MONTHLY_CATEGORIZATION_CRON) {
+      ctx.waitUntil(runCategorization(env, { force: true }));
+    } else {
+      ctx.waitUntil(runRefresh(env));
+    }
   },
 } satisfies ExportedHandler<Env>;

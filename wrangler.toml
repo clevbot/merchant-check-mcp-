@@ -13,11 +13,16 @@ database_name = "merchant-signals"
 database_id = "0964f469-94f4-4da1-94a7-6033d89ccb9a"
 
 # ---------------------------------------------------------------------------
-# Scheduled refresh worker: re-aggregates the merchant-signal store.
-# Starting cadence: every 4 hours. Tune once real query volume exists.
+# Two independent scheduled jobs share the scheduled() handler in
+# src/index.ts, which branches on controller.cron:
+#   - "0 */4 * * *"  trust-signal refresh (src/refresh), every 4 hours.
+#   - "0 0 1 * *"    categorization force re-run (src/categorize), monthly
+#                    (1st of the month) — MUST match MONTHLY_CATEGORIZATION_CRON
+#                    in src/index.ts if ever changed. Deliberately not the
+#                    same cadence as the trust-signal refresh — requirement 6.
 # ---------------------------------------------------------------------------
 [triggers]
-crons = ["0 */4 * * *"]
+crons = ["0 */4 * * *", "0 0 1 * *"]
 
 # ---------------------------------------------------------------------------
 # Custom domains. gradientdecisions.com is already a Cloudflare zone on this
@@ -52,3 +57,7 @@ X402_FACILITATOR_URL = "https://x402.org/facilitator"
 # PAYOUT_ADDRESS: set via `wrangler secret put PAYOUT_ADDRESS` (or move here
 # once it's a real, non-sensitive public receiving address you're ready to
 # commit to git). Left unset on purpose — see README "Before this can run".
+# ANTHROPIC_API_KEY: set via `wrangler secret put ANTHROPIC_API_KEY` — powers
+# the categorization pass-2 model fallback (src/categorize/model.ts).
+# Optional: unset just means everything the rule pass can't confidently
+# place lands in 'other' and gets logged for review instead of erroring.

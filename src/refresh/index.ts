@@ -2,12 +2,23 @@ import { scoreMerchant } from "../scoring";
 import type { Env, MerchantSignalRow } from "../types";
 import type { ChainDataSource, RawMerchantActivity } from "./indexer";
 import { BazaarDataSource } from "./indexer";
+import { categorizeAndStoreOne } from "../categorize";
 
 /**
  * Runs on the cron trigger in wrangler.toml. Pulls raw activity from the
  * ChainDataSource, aggregates it into merchant_signals rows, scores each
  * row, and upserts. check_merchant (src/tool.ts) never runs this logic
  * itself — it only reads the cached result.
+ *
+ * Categorization (src/categorize) is a deliberately separate concern with
+ * its own cadence (see requirement 6 / README "Categorization"), but this
+ * loop is the cheapest place to trigger it for a wallet's *first* ingestion:
+ * the Bazaar description text is already in hand here, so categorizing
+ * inline costs one extra D1 read + write per new wallet, not a second
+ * Bazaar crawl. Every wallet already categorized is left untouched —
+ * upsertSignals never writes category/category_source/category_updated_at,
+ * only bazaar_description (kept fresh every run so a later manual/monthly
+ * re-categorization sees current text — see runCategorization).
  */
 export async function runRefresh(env: Env): Promise<void> {
   const source: ChainDataSource = getDataSource(env);
@@ -21,9 +32,20 @@ export async function runRefresh(env: Env): Promise<void> {
     const activity = await source.getMerchantActivity(wallet);
     const row = aggregate(activity, nowSeconds);
     const { tier, reasons } = scoreMerchant(row);
-    await upsertSignals(env, { ...row, tier, reasons_json: JSON.stringify(reasons) });
+    const needsCategorization = await isUncategorized(env, wallet);
+    await upsertSignals(env, { ...row, tier, reasons_json: JSON.stringify(reasons) }, activity.description);
     await upsertPriceObservations(env, wallet, activity);
+    if (needsCategorization) {
+      await categorizeAndStoreOne(env, wallet, activity.description || null);
+    }
   }
+}
+
+async function isUncategorized(env: Env, wallet: string): Promise<boolean> {
+  const row = await env.DB.prepare("SELECT category FROM merchant_signals WHERE wallet_address = ?")
+    .bind(wallet.toLowerCase())
+    .first<{ category: string | null }>();
+  return !row || row.category === null;
 }
 
 function getDataSource(_env: Env): ChainDataSource {
@@ -96,13 +118,21 @@ function computePriceVarianceFlag(activity: RawMerchantActivity): number {
 async function upsertSignals(
   env: Env,
   row: MerchantSignalRow,
+  bazaarDescription: string,
 ): Promise<void> {
+  // Deliberately does NOT write category / category_source /
+  // category_updated_at, in either the INSERT column list or the ON
+  // CONFLICT UPDATE SET — those are src/categorize's to write, on its own
+  // cadence. bazaar_description IS written/refreshed here every run (see
+  // module comment) so categorization always has current text when it does
+  // run, without needing its own Bazaar fetch.
   await env.DB.prepare(
     `INSERT INTO merchant_signals (
       wallet_address, network, first_seen_at, wallet_age_days, unique_payer_count, total_tx_count,
       payer_cluster_flag, completed_flow_count, abandoned_flow_count, refund_count,
-      refund_eligible_volume, price_variance_flag, velocity_anomaly_flag, tier, reasons_json, refreshed_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      refund_eligible_volume, price_variance_flag, velocity_anomaly_flag, tier, reasons_json,
+      refreshed_at, bazaar_description
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(wallet_address) DO UPDATE SET
       network = excluded.network,
       first_seen_at = excluded.first_seen_at,
@@ -118,7 +148,8 @@ async function upsertSignals(
       velocity_anomaly_flag = excluded.velocity_anomaly_flag,
       tier = excluded.tier,
       reasons_json = excluded.reasons_json,
-      refreshed_at = excluded.refreshed_at`,
+      refreshed_at = excluded.refreshed_at,
+      bazaar_description = excluded.bazaar_description`,
   )
     .bind(
       row.wallet_address,
@@ -137,6 +168,7 @@ async function upsertSignals(
       row.tier,
       row.reasons_json,
       row.refreshed_at,
+      bazaarDescription || null,
     )
     .run();
 }

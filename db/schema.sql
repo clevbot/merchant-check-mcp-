@@ -56,8 +56,50 @@ CREATE TABLE IF NOT EXISTS merchant_signals (
   -- flow actually runs on. Once test-network activity can appear in a real
   -- data source (not just synthetic demo rows), filter on this rather than
   -- is_demo to keep it out of the public dataset.
-  network                   TEXT NOT NULL DEFAULT 'eip155:8453'
+  network                   TEXT NOT NULL DEFAULT 'eip155:8453',
+
+  -- Merchant categorization — additive, does not feed src/scoring.ts.
+  -- Raw text captured from the Bazaar listing every trust-signal refresh
+  -- (so it's always current even though categorization itself runs on a
+  -- separate, much slower cadence — see src/categorize). Concatenation of
+  -- every resource's description this wallet backs; NULL for is_demo rows
+  -- (they don't come from Bazaar) and for anything not yet ingested.
+  bazaar_description        TEXT,
+
+  -- One of the six fixed values in src/categorize/types.ts. NULL until the
+  -- categorization pass (not the trust-signal refresh) has run for this
+  -- wallet at least once. Never invented outside the fixed set — anything
+  -- the rule+model pipeline can't confidently place lands in 'other' and is
+  -- logged to category_review_log below, not given a new category.
+  category                  TEXT,
+  -- 'rule' | 'model' — which pass produced the current `category` value.
+  category_source           TEXT,
+  -- unix seconds of the last categorization run for this wallet. Separate
+  -- from `refreshed_at` on purpose: refreshed_at moves every 4h with trust
+  -- signals, category_updated_at only moves when src/categorize actually
+  -- runs (first ingestion, or a manual/monthly force re-run).
+  category_updated_at       INTEGER
 );
+
+-- Spot-check log for categorization decisions worth a human look: every
+-- pass-2 (model) classification, per the brief's own logging requirement,
+-- plus every 'other' bucket assignment regardless of which pass produced
+-- it (rule pass found nothing AND model pass unavailable/unparseable is
+-- exactly the case requirement 2 asks to flag rather than silently accept).
+CREATE TABLE IF NOT EXISTS category_review_log (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  wallet_address    TEXT NOT NULL,
+  description_text  TEXT,
+  category           TEXT NOT NULL,
+  category_source    TEXT NOT NULL,
+  -- 'model_classified' | 'other_no_rule_match' | 'other_model_unavailable' | 'other_unparseable_model_output'
+  reason              TEXT NOT NULL,
+  raw_model_output    TEXT,
+  created_at           INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_category_review_created
+  ON category_review_log (created_at DESC);
 
 -- One row per (resource_type, price) quote a merchant has given, used for
 -- price-fairness comparison. Populated by the refresh worker from x402

@@ -17,6 +17,14 @@ export async function getMerchantSignals(
   return row ?? null;
 }
 
+// TODO(price-fairness-by-category): once price_observations has real volume
+// (currently always empty — see src/refresh/indexer.ts BazaarDataSource
+// class comment), join against merchant_signals.category here and filter
+// comparable prices to the same category as the merchant being scored,
+// not the whole dataset. merchant_signals.category is populated and
+// queryable now (see src/categorize) specifically so this join is ready to
+// write whenever price_observations has data to join against. Deliberately
+// not wired up yet — no real price data exists to validate it against.
 export async function getComparablePrices(
   env: Env,
   resourceType: string,

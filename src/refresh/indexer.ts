@@ -51,6 +51,13 @@ export interface RawMerchantActivity {
   refunds: number;
   refundEligibleVolume: number;
   priceObservations: { resourceType: string; priceAtomic: number; payer: string; at: number }[];
+  /**
+   * Concatenation of every resource description this wallet backs — the raw
+   * text src/categorize classifies from. Empty string if Bazaar gave no
+   * description for any of them (categorization still runs on empty text,
+   * lands in 'other', gets flagged — see categorizeDescription).
+   */
+  description: string;
 }
 
 export interface ChainDataSource {
@@ -67,6 +74,9 @@ interface BazaarItem {
   resource: string;
   accepts: BazaarAccept[];
   quality?: { l30DaysTotalCalls?: number; l30DaysUniquePayers?: number };
+  description?: string;
+  serviceName?: string;
+  tags?: string[];
 }
 interface BazaarListResponse {
   items: BazaarItem[];
@@ -123,6 +133,9 @@ export class BazaarDataSource implements ChainDataSource {
     );
     const calls = item.quality?.l30DaysTotalCalls ?? 0;
     const payers = item.quality?.l30DaysUniquePayers ?? 0;
+    const descriptionPart = [item.serviceName, item.description, ...(item.tags ?? [])]
+      .filter(Boolean)
+      .join(". ");
 
     for (const wallet of basePayTos) {
       const existing = this.cache.get(wallet);
@@ -131,9 +144,15 @@ export class BazaarDataSource implements ChainDataSource {
         // endpoints) — sum call volume across them. uniquePayerCount takes
         // the max seen on any single resource as a floor: a true union
         // would need actual payer identities, which Bazaar's directory
-        // listing doesn't expose, only per-resource counts.
+        // listing doesn't expose, only per-resource counts. Descriptions
+        // concatenate — categorization sees everything this wallet sells.
         existing.txCount += calls;
         existing.uniquePayerCount = Math.max(existing.uniquePayerCount, payers);
+        if (descriptionPart) {
+          existing.description = existing.description
+            ? `${existing.description}. ${descriptionPart}`
+            : descriptionPart;
+        }
       } else {
         this.cache.set(wallet, {
           walletAddress: wallet,
@@ -146,6 +165,7 @@ export class BazaarDataSource implements ChainDataSource {
           refunds: 0,
           refundEligibleVolume: 0,
           priceObservations: [],
+          description: descriptionPart,
         });
       }
     }
