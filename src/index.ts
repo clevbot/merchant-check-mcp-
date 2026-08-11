@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { HTTPFacilitatorClient, x402ResourceServer } from "@x402/core/server";
+import { createFacilitatorConfig } from "@coinbase/x402";
 import type { Network, PaymentRequirements } from "@x402/core/types";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { createPaymentWrapper } from "@x402/mcp";
@@ -40,7 +41,21 @@ let resourceServerPromise: Promise<x402ResourceServer> | null = null;
 function getResourceServer(env: Env): Promise<x402ResourceServer> {
   if (!resourceServerPromise) {
     resourceServerPromise = (async () => {
-      const facilitator = new HTTPFacilitatorClient({ url: env.X402_FACILITATOR_URL });
+      // The free public x402.org facilitator (previously hardcoded via
+      // env.X402_FACILITATOR_URL) is testnet-only by design — found this
+      // out the hard way, via a real failed mainnet call: "Facilitator
+      // does not support exact on eip155:8453." Base mainnet settlement
+      // needs Coinbase's CDP
+      // production facilitator, which requires CDP API key auth.
+      // createFacilitatorConfig (the official @coinbase/x402 package, same
+      // publisher as the protocol) points at the correct CDP endpoint and
+      // handles the JWT auth signing internally — passing undefined here is
+      // intentional until CDP_API_KEY_ID/SECRET are set (see README): the
+      // facilitator will reject verify/settle calls with a clear auth error
+      // rather than silently accepting unauthenticated mainnet requests.
+      const facilitator = new HTTPFacilitatorClient(
+        createFacilitatorConfig(env.CDP_API_KEY_ID, env.CDP_API_KEY_SECRET),
+      );
       const server = new x402ResourceServer(facilitator);
       server.register(env.X402_NETWORK as Network, new ExactEvmScheme());
       await server.initialize();

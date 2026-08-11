@@ -11,9 +11,11 @@
     "db:migrate:remote": "wrangler d1 execute merchant-signals --remote --file=./db/schema.sql",
     "backtest": "tsx scripts/backtest.ts",
     "demo": "node --env-file=.env.demo --import tsx scripts/demo-client.ts",
+    "mainnet-test": "node --env-file=.env.mainnet-test --import tsx scripts/mainnet-live-test.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p scripts/tsconfig.json"
   },
   "dependencies": {
+    "@coinbase/x402": "^2.1.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@x402/core": "^2.21.0",
     "@x402/evm": "^2.21.0",

@@ -3,5 +3,6 @@ dist/
 .wrangler/
 .dev.vars
 .env.demo
+.env.mainnet-test
 *.log
 .DS_Store

@@ -78,9 +78,16 @@ refresh — untouched by design, not a bug).
 npm run demo
 ```
 
+**Stale as of 2026-08-11 — the deployed server only accepts Base mainnet
+now** (`X402_NETWORK = eip155:8453`, see "Going to mainnet"). This script
+still pays on Base Sepolia, so it'll fail against the live deployment;
+kept as reference and for anyone testing a testnet-configured branch
+locally. For a real, working live test, see "Mainnet live payment test"
+below.
+
 Uses the throwaway keypair in `.env.demo` (gitignored, testnet-only, zero
 real value). To get past the "insufficient balance" step and see an actual
-paid `trusted`/`avoid` response:
+paid `trusted`/`avoid` response on a testnet deployment:
 
 1. Get the payer address: `DEMO_PAYER_ADDRESS` in `.env.demo`
    (`0x9AaF5bB90307bacb9cB60f54c1be2B65B0771282`).
@@ -90,6 +97,47 @@ paid `trusted`/`avoid` response:
    (`0x1111...11d1` / `0x2222...22d2`, inserted directly into D1 for this
    demo — see "Demo data" below) should come back `trusted` and `avoid`
    respectively, with a real settlement tx hash.
+
+## Mainnet live payment test
+
+**Real money.** `scripts/mainnet-live-test.ts` makes one real $0.01 x402
+payment against the live mainnet deployment — the actual proof that
+settlement genuinely works end to end, not just that the facilitator
+config resolves correctly (which was already verified separately without
+spending anything). Deliberately not wired into `npm run demo` or any
+other default command — only runs via the explicit `npm run mainnet-test`,
+and only with a private key you provide via a local, gitignored
+`.env.mainnet-test` file that never leaves your machine (same pattern as
+every other secret in this project — I don't generate, hold, or touch it).
+
+```bash
+cd "/Users/colincleven/Documents/merchant-check-mcp"
+
+# 1. Generate a fresh throwaway keypair (runs locally, nothing sent anywhere)
+PATH="/Users/colincleven/.nvm/versions/node/v24.15.0/bin:$PATH" node --input-type=module -e "
+import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
+const k = generatePrivateKey();
+const a = privateKeyToAccount(k);
+console.log('address:', a.address);
+console.log('private key:', k);
+"
+
+# 2. Save the private key locally (paste the value the command above printed)
+cat > .env.mainnet-test << 'EOF'
+MAINNET_PAYER_PRIVATE_KEY=paste_the_private_key_here
+EOF
+
+# 3. Send a small amount of real USDC on Base mainnet (e.g. $0.05) to the
+#    "address:" printed in step 1, from your own wallet/exchange.
+
+# 4. Run the real test
+PATH="/Users/colincleven/.nvm/versions/node/v24.15.0/bin:$PATH" npm run mainnet-test
+```
+
+Checks a real trusted-tier merchant from the live dataset by default
+(`0xffc458db291b4abce020fe3de4f91f2770e537b1`) — override with
+`TEST_MERCHANT_WALLET=0x... npm run mainnet-test`. Success prints a real
+transaction hash and a BaseScan link.
 
 ## Demo data
 

@@ -2,7 +2,6 @@ export interface Env {
   DB: D1Database;
   /** CAIP-2 format, e.g. "eip155:84532" (Base Sepolia) or "eip155:8453" (Base mainnet). */
   X402_NETWORK: string;
-  X402_FACILITATOR_URL: string;
   /** Set via `wrangler secret put PAYOUT_ADDRESS` — see README "Before this can run". */
   PAYOUT_ADDRESS: string;
   /** Set via `wrangler secret put ADMIN_TOKEN` — gates POST /refresh and POST /categorize (see src/index.ts). */
@@ -14,6 +13,17 @@ export interface Env {
    * (logged for review) instead of erroring — see README "Categorization".
    */
   ANTHROPIC_API_KEY?: string;
+  /**
+   * Set via `wrangler secret put CDP_API_KEY_ID` / `CDP_API_KEY_SECRET` —
+   * required for real mainnet settlement (see src/index.ts getResourceServer
+   * and README "Going to mainnet"). The free public x402.org facilitator is
+   * testnet-only; Base mainnet needs Coinbase's authenticated CDP
+   * production facilitator. Optional in the type only because the app must
+   * still boot without them — verify/settle calls fail clearly without
+   * these set, rather than silently using an unauthenticated endpoint.
+   */
+  CDP_API_KEY_ID?: string;
+  CDP_API_KEY_SECRET?: string;
 }
 
 import type { MerchantCategory } from "./categorize/types";

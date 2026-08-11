@@ -47,17 +47,29 @@ pattern = "www.gradientdecisions.com"
 custom_domain = true
 
 [vars]
-# Public config only. Secrets (PAYOUT_ADDRESS, CDP_API_KEY) go through
-# `wrangler secret put`, not here.
+# Public config only. Secrets (PAYOUT_ADDRESS, ANTHROPIC_API_KEY,
+# CDP_API_KEY_ID, CDP_API_KEY_SECRET) go through `wrangler secret put`, not
+# here.
 # Network is CAIP-2 format (@x402/core v2 protocol) — eip155:84532 is Base
-# Sepolia, eip155:8453 is Base mainnet. Do not switch to mainnet without
-# re-reading README "Going to mainnet" first.
-X402_NETWORK = "eip155:84532"
-X402_FACILITATOR_URL = "https://x402.org/facilitator"
-# PAYOUT_ADDRESS: set via `wrangler secret put PAYOUT_ADDRESS` (or move here
-# once it's a real, non-sensitive public receiving address you're ready to
-# commit to git). Left unset on purpose — see README "Before this can run".
+# Sepolia, eip155:8453 is Base mainnet.
+#
+# Switched to mainnet 2026-08-11 — deliberate, explicitly-confirmed switch
+# (see README "Going to mainnet"). NOT actually settling real payments yet
+# though: the free public x402.org facilitator this project used throughout
+# is testnet-only, confirmed via a real failed mainnet call ("Facilitator
+# does not support exact on eip155:8453"). Real settlement needs Coinbase's
+# authenticated CDP production facilitator — see src/index.ts
+# getResourceServer and CDP_API_KEY_ID/SECRET below. Don't flip back to
+# testnet or change PAYOUT_ADDRESS without the same kind of explicit
+# confirmation as the original switch, since either would misdirect funds.
+X402_NETWORK = "eip155:8453"
+# PAYOUT_ADDRESS: real Base mainnet address, set via `wrangler secret put`.
+# You provided this address directly; I never held or generated its key.
 # ANTHROPIC_API_KEY: set via `wrangler secret put ANTHROPIC_API_KEY` — powers
 # the categorization pass-2 model fallback (src/categorize/model.ts).
 # Optional: unset just means everything the rule pass can't confidently
 # place lands in 'other' and gets logged for review instead of erroring.
+# CDP_API_KEY_ID / CDP_API_KEY_SECRET: set via `wrangler secret put` (both) —
+# required for real mainnet settlement to actually work. Get them from
+# portal.cdp.coinbase.com (free CDP account, then create an API key —
+# same account-creation-must-be-you pattern as ANTHROPIC_API_KEY).
