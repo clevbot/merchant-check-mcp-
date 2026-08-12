@@ -2,6 +2,7 @@ import type { Env } from "../types";
 import { categorizeByRules } from "./rules";
 import { categorizeByModel } from "./model";
 import type { CategoryResult } from "./types";
+import { detectAndNormalize } from "../chains";
 
 /**
  * Categorizes one description through both passes. Never invents a
@@ -57,13 +58,19 @@ async function logReview(
   result: CategoryResult,
 ): Promise<void> {
   if (!result.reviewReason) return;
+  // walletAddress arrives here already chain-normalized by every real
+  // caller (see categorizeAndStoreOne below) — detectAndNormalize is a
+  // defensive re-normalize, not a bare .toLowerCase(), so a Solana wallet
+  // stays case-correct instead of being silently corrupted (see src/chains.ts).
+  const detected = detectAndNormalize(walletAddress);
+  const normalizedWallet = detected ? detected.normalized : walletAddress;
   await env.DB.prepare(
     `INSERT INTO category_review_log
        (wallet_address, description_text, category, category_source, reason, raw_model_output, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
-      walletAddress.toLowerCase(),
+      normalizedWallet,
       description,
       result.category,
       result.source,
@@ -91,12 +98,18 @@ export async function categorizeAndStoreOne(
   const result = await categorizeDescription(description ?? "", env);
   const now = Math.floor(Date.now() / 1000);
 
+  // Same reasoning as logReview above — normalize per-chain, not a bare
+  // .toLowerCase(), or this UPDATE's WHERE clause silently matches zero
+  // rows for any Solana wallet.
+  const detected = detectAndNormalize(walletAddress);
+  const normalizedWallet = detected ? detected.normalized : walletAddress;
+
   await env.DB.prepare(
     `UPDATE merchant_signals
      SET category = ?, category_source = ?, category_updated_at = ?
      WHERE wallet_address = ?`,
   )
-    .bind(result.category, result.source, now, walletAddress.toLowerCase())
+    .bind(result.category, result.source, now, normalizedWallet)
     .run();
 
   await logReview(env, walletAddress, description, result);

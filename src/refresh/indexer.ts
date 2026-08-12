@@ -74,6 +74,17 @@ export interface RawMerchantActivity {
    * refreshed every cycle, no payer identity attached).
    */
   resourcePrices: { resource: string; priceAtomic: number }[];
+  /**
+   * Every distinct resource (API/service URL) this wallet backs, with its
+   * listed name if the discovery feed gave one. This is real data both
+   * Bazaar and PayAI already return per listing (the `resource` and
+   * `serviceName` fields) — previously only ever blended into the
+   * `description` text blob above and never surfaced structured. One
+   * wallet can back multiple resources (e.g. several API endpoints), so
+   * this is a list, not a single URL — dedupe by URL, same pattern as
+   * resourcePrices.
+   */
+  platforms: { url: string; serviceName: string | null }[];
 }
 
 export interface ChainDataSource {
@@ -164,6 +175,9 @@ export class BazaarDataSource implements ChainDataSource {
     const priceAtomic = chosenAccept ? Number(chosenAccept.amount) : NaN;
     const resourcePriceEntry =
       Number.isFinite(priceAtomic) && priceAtomic >= 0 ? [{ resource: item.resource, priceAtomic }] : [];
+    const platformEntry = item.resource
+      ? [{ url: item.resource, serviceName: item.serviceName ?? null }]
+      : [];
 
     for (const wallet of basePayTos) {
       const existing = this.cache.get(wallet);
@@ -182,6 +196,12 @@ export class BazaarDataSource implements ChainDataSource {
             : descriptionPart;
         }
         existing.resourcePrices.push(...resourcePriceEntry);
+        // Dedupe by URL — a resource can appear more than once across
+        // pages/scheme variants (see basePayTos comment above), and we
+        // don't want the same platform URL listed twice for one wallet.
+        if (platformEntry.length > 0 && !existing.platforms.some((p) => p.url === platformEntry[0]!.url)) {
+          existing.platforms.push(...platformEntry);
+        }
       } else {
         this.cache.set(wallet, {
           walletAddress: wallet,
@@ -196,6 +216,7 @@ export class BazaarDataSource implements ChainDataSource {
           priceObservations: [],
           description: descriptionPart,
           resourcePrices: [...resourcePriceEntry],
+          platforms: [...platformEntry],
         });
       }
     }

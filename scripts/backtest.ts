@@ -14,6 +14,7 @@
  */
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { detectAndNormalize } from "../src/chains";
 
 type Tier = "trusted" | "caution" | "avoid";
 interface LabeledCase {
@@ -42,7 +43,13 @@ if (labeled.cases.length === 0) {
 }
 
 function queryTier(wallet: string): string | null {
-  const sql = `SELECT tier FROM merchant_signals WHERE wallet_address = '${wallet.toLowerCase()}';`;
+  // Base addresses lowercase for lookup; Solana addresses are case-sensitive
+  // base58 and must be left exactly as given — see src/chains.ts. A bare
+  // .toLowerCase() here would silently return "no row" for every Solana
+  // wallet in labeled-wallets.json rather than the real stored tier.
+  const detected = detectAndNormalize(wallet);
+  const normalized = detected ? detected.normalized : wallet;
+  const sql = `SELECT tier FROM merchant_signals WHERE wallet_address = '${normalized}';`;
   const out = execSync(`npx wrangler d1 execute merchant-signals ${flag} --json --command "${sql}"`, {
     encoding: "utf8",
   });

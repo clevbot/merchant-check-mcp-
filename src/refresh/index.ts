@@ -2,7 +2,10 @@ import { scoreMerchant } from "../scoring";
 import type { Env, MerchantSignalRow } from "../types";
 import type { ChainDataSource, RawMerchantActivity } from "./indexer";
 import { BazaarDataSource } from "./indexer";
+import { PayAIDataSource } from "./solana-indexer";
 import { categorizeAndStoreOne } from "../categorize";
+import { detectAndNormalize } from "../chains";
+import type { Chain } from "../chains";
 
 /**
  * Runs on the cron trigger in wrangler.toml. Pulls raw activity from the
@@ -21,12 +24,16 @@ import { categorizeAndStoreOne } from "../categorize";
  * re-categorization sees current text — see runCategorization).
  */
 export async function runRefresh(env: Env): Promise<void> {
-  const source: ChainDataSource = getDataSource(env);
+  // Base (Bazaar) and Solana (PayAI, optionally Helius-augmented) are two
+  // independent ChainDataSource instances, run one after another in the
+  // same invocation. They write to the same merchant_signals table
+  // distinguished by wallet_address format + the `chain` column (see
+  // db/schema.sql) — nothing below needs to know which source a wallet came
+  // from beyond that.
+  const sources: ChainDataSource[] = [new BazaarDataSource(), new PayAIDataSource(env.HELIUS_API_KEY)];
 
   const nowSeconds = Math.floor(Date.now() / 1000);
   const sinceSeconds = nowSeconds - 90 * 24 * 60 * 60; // look back 90 days for the active-merchant list
-
-  const wallets = await source.listActiveMerchants(sinceSeconds);
 
   // D1 caps a Worker invocation at 1000 total queries (paid plan), and each
   // statement inside an env.DB.batch() call still counts individually
@@ -34,32 +41,52 @@ export async function runRefresh(env: Env): Promise<void> {
   // fewer total statements did). One D1 call per wallet per concern doesn't
   // scale past a few hundred wallets, so: one bulk category lookup instead
   // of 375 individual SELECTs, and price observations are accumulated in
-  // memory across the whole loop and written as a handful of bulk
-  // statements at the end instead of per wallet — see
+  // memory across the whole loop (both sources) and written as a handful of
+  // bulk statements at the end instead of per wallet — see
   // bulkReplaceCategoryPriceObservations. upsertSignals/upsertPriceObservations
   // stay per-wallet (1 statement each, upsertPriceObservations empty today)
   // since that's exactly the ~1-2/wallet load this pipeline always ran at
-  // and is proven to fit comfortably under the cap.
+  // and is proven to fit comfortably under the cap — adding a second source
+  // roughly doubles wallet count, not the cap, so this still holds.
   const existingCategories = await getAllExistingCategories(env);
   const priceRows: { wallet: string; category: string; priceAtomic: number }[] = [];
 
-  for (const wallet of wallets) {
-    const activity = await source.getMerchantActivity(wallet);
-    const row = aggregate(activity, nowSeconds);
-    const { tier, reasons } = scoreMerchant(row);
-    await upsertSignals(env, { ...row, tier, reasons_json: JSON.stringify(reasons) }, activity.description);
-    await upsertPriceObservations(env, wallet, activity);
+  // Real, confirmed 2026-08-12 (wrangler tail, live 1101 error): this
+  // account's Worker invocation has a hard ~50-subrequest budget, and
+  // categorizeAndStoreOne's model-fallback pass (src/categorize/model.ts)
+  // is itself one fetch to Anthropic per never-before-seen wallet. Fine
+  // when new wallets trickle in a handful at a time (the steady state,
+  // after a source's backlog is processed), but Solana's *first* refresh
+  // ever can plausibly surface dozens of brand-new wallets in one run —
+  // exactly the same class of budget blowout the discovery/Helius fetches
+  // above just hit, just via a different call site. Capped here rather
+  // than given its own separate budget-tracking mechanism: wallets past
+  // the cap simply keep category=null this cycle (an already-handled,
+  // normal state elsewhere in this codebase) and get picked up by the
+  // existing backlog sweep (runCategorization, POST /categorize) on its
+  // own cadence — reusing that machinery instead of duplicating it.
+  const MAX_INLINE_CATEGORIZATIONS_PER_RUN = 8;
+  let inlineCategorizations = 0;
 
-    const walletLower = wallet.toLowerCase();
-    let category = existingCategories.get(walletLower) ?? null;
-    if (category === null) {
-      // First-time ingestion only — rare after the initial backlog is
-      // processed, so still fine as an individual D1 call per occurrence.
-      category = (await categorizeAndStoreOne(env, wallet, activity.description || null)).category;
-    }
-    if (category) {
-      for (const { priceAtomic } of activity.resourcePrices) {
-        priceRows.push({ wallet: walletLower, category, priceAtomic });
+  for (const source of sources) {
+    const wallets = await source.listActiveMerchants(sinceSeconds);
+
+    for (const wallet of wallets) {
+      const activity = await source.getMerchantActivity(wallet);
+      const row = aggregate(activity, nowSeconds);
+      const { tier, reasons } = scoreMerchant(row);
+      await upsertSignals(env, { ...row, tier, reasons_json: JSON.stringify(reasons) }, activity.description);
+      await upsertPriceObservations(env, row.wallet_address, activity);
+
+      let category = existingCategories.get(row.wallet_address) ?? null;
+      if (category === null && inlineCategorizations < MAX_INLINE_CATEGORIZATIONS_PER_RUN) {
+        inlineCategorizations++;
+        category = (await categorizeAndStoreOne(env, row.wallet_address, activity.description || null)).category;
+      }
+      if (category) {
+        for (const { priceAtomic } of activity.resourcePrices) {
+          priceRows.push({ wallet: row.wallet_address, category, priceAtomic });
+        }
       }
     }
   }
@@ -73,12 +100,6 @@ async function getAllExistingCategories(env: Env): Promise<Map<string, string | 
     category: string | null;
   }>();
   return new Map(results.map((r) => [r.wallet_address, r.category]));
-}
-
-function getDataSource(_env: Env): ChainDataSource {
-  // Public, no-key x402 Bazaar discovery catalog — see indexer.ts for scope
-  // and limitations (real data, but only for Bazaar-registered merchants).
-  return new BazaarDataSource();
 }
 
 function aggregate(
@@ -107,8 +128,21 @@ function aggregate(
   // detector exists and can be pointed at merchant wallets too.
   const velocityAnomalyFlag = detectVelocityAnomalyStub();
 
+  // Chain is derived from the address's own format (src/chains.ts), not
+  // trusted from activity.network — the format is authoritative (0x-hex vs
+  // base58 charsets are disjoint) and this stays correct even if a future
+  // source mislabels network. Both real sources (BazaarDataSource,
+  // PayAIDataSource) only ever emit addresses matching one of the two known
+  // formats, so detectAndNormalize succeeding is the expected case; the
+  // fallback below only guards against a malformed upstream entry breaking
+  // the whole refresh run over one bad row.
+  const detected = detectAndNormalize(activity.walletAddress);
+  const chain: Chain = detected?.chain ?? (activity.network.startsWith("solana:") ? "solana" : "base");
+  const walletAddress = detected?.normalized ?? activity.walletAddress;
+
   return {
-    wallet_address: activity.walletAddress.toLowerCase(),
+    wallet_address: walletAddress,
+    chain,
     network: activity.network,
     first_seen_at: activity.firstSeenAt,
     wallet_age_days: walletAgeDays,
@@ -122,6 +156,7 @@ function aggregate(
     price_variance_flag: computePriceVarianceFlag(activity),
     velocity_anomaly_flag: velocityAnomalyFlag,
     refreshed_at: nowSeconds,
+    platforms_json: activity.platforms.length > 0 ? JSON.stringify(activity.platforms) : null,
   };
 }
 
@@ -159,12 +194,13 @@ async function upsertSignals(
   // run, without needing its own Bazaar fetch.
   await env.DB.prepare(
     `INSERT INTO merchant_signals (
-      wallet_address, network, first_seen_at, wallet_age_days, unique_payer_count, total_tx_count,
+      wallet_address, chain, network, first_seen_at, wallet_age_days, unique_payer_count, total_tx_count,
       payer_cluster_flag, completed_flow_count, abandoned_flow_count, refund_count,
       refund_eligible_volume, price_variance_flag, velocity_anomaly_flag, tier, reasons_json,
-      refreshed_at, bazaar_description
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      refreshed_at, bazaar_description, platforms_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(wallet_address) DO UPDATE SET
+      chain = excluded.chain,
       network = excluded.network,
       first_seen_at = excluded.first_seen_at,
       wallet_age_days = excluded.wallet_age_days,
@@ -180,10 +216,12 @@ async function upsertSignals(
       tier = excluded.tier,
       reasons_json = excluded.reasons_json,
       refreshed_at = excluded.refreshed_at,
-      bazaar_description = excluded.bazaar_description`,
+      bazaar_description = excluded.bazaar_description,
+      platforms_json = excluded.platforms_json`,
   )
     .bind(
       row.wallet_address,
+      row.chain,
       row.network,
       row.first_seen_at,
       row.wallet_age_days,
@@ -200,13 +238,14 @@ async function upsertSignals(
       row.reasons_json,
       row.refreshed_at,
       bazaarDescription || null,
+      row.platforms_json,
     )
     .run();
 }
 
 async function upsertPriceObservations(
   env: Env,
-  wallet: string,
+  wallet: string, // already chain-normalized by the caller (aggregate()'s row.wallet_address) — do not re-lowercase here, that would corrupt Solana addresses.
   activity: RawMerchantActivity,
 ): Promise<void> {
   for (const obs of activity.priceObservations) {
@@ -214,7 +253,7 @@ async function upsertPriceObservations(
       `INSERT INTO price_observations (wallet_address, resource_type, price_atomic, payer_address, observed_at)
        VALUES (?, ?, ?, ?, ?)`,
     )
-      .bind(wallet.toLowerCase(), obs.resourceType, obs.priceAtomic, obs.payer, obs.at)
+      .bind(wallet, obs.resourceType, obs.priceAtomic, obs.payer, obs.at)
       .run();
   }
 }

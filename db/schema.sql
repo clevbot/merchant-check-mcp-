@@ -3,7 +3,16 @@
 -- the check_merchant tool (src/tool.ts). Never computed live on request.
 
 CREATE TABLE IF NOT EXISTS merchant_signals (
-  wallet_address        TEXT PRIMARY KEY,      -- lowercased 0x... address
+  -- Base addresses are lowercased 0x-hex; Solana addresses are base58 and
+  -- kept exactly as given (base58 is case-sensitive — see src/chains.ts,
+  -- which every write/read of this column must go through). wallet_address
+  -- alone is safe as a sole PRIMARY KEY across both chains: the two address
+  -- formats (0x-hex vs base58) are disjoint character sets, so there's no
+  -- realistic collision even without a composite (chain, wallet_address) key.
+  wallet_address        TEXT PRIMARY KEY,
+  -- 'base' | 'solana'. Added 2026-08-12; existing rows default to 'base'
+  -- since every prior write was Base-only.
+  chain                  TEXT NOT NULL DEFAULT 'base',
 
   -- Signal 1: wallet age / longevity
   first_seen_at         INTEGER,               -- unix seconds of earliest known tx
@@ -29,6 +38,12 @@ CREATE TABLE IF NOT EXISTS merchant_signals (
   -- STUB: no buyer-side wallet-harness pipeline exists yet to reuse (per
   -- 2026-08-10 decision — see README "Signal 6 is stubbed"). This flag is
   -- always 0 until that pipeline exists and this table is backfilled from it.
+  -- FLAGGED (2026-08-12): when this does get implemented, it should NOT
+  -- reuse Base-tuned velocity thresholds unmodified for chain='solana' rows.
+  -- Solana finality is roughly 4x faster than Base's (~0.5s vs ~2s), so
+  -- transaction-frequency patterns that would look anomalous on Base could
+  -- be entirely normal Solana activity, purely from chain speed, not
+  -- genuine behavior difference — see README "Solana signal caveats".
   velocity_anomaly_flag   INTEGER DEFAULT 0,
 
   -- Derived output, recomputed each refresh so check_merchant never runs
@@ -78,7 +93,18 @@ CREATE TABLE IF NOT EXISTS merchant_signals (
   -- from `refreshed_at` on purpose: refreshed_at moves every 4h with trust
   -- signals, category_updated_at only moves when src/categorize actually
   -- runs (first ingestion, or a manual/monthly force re-run).
-  category_updated_at       INTEGER
+  category_updated_at       INTEGER,
+
+  -- Added 2026-08-12. JSON array of {url, serviceName} — every distinct
+  -- resource (API/service endpoint) this wallet backs, straight from the
+  -- discovery feed's own `resource` + `serviceName` fields (real data both
+  -- Bazaar and PayAI already return per listing; previously only ever
+  -- blended into bazaar_description's text blob and discarded structured).
+  -- One wallet can back multiple resources, hence an array not a single
+  -- URL. NULL for is_demo rows and anything not yet ingested, same as
+  -- bazaar_description. Not a scoring input — purely additive context for
+  -- check_merchant callers and the dashboard, same status as `category`.
+  platforms_json             TEXT
 );
 
 -- Spot-check log for categorization decisions worth a human look: every
@@ -131,12 +157,27 @@ CREATE INDEX IF NOT EXISTS idx_price_obs_wallet_resource
 
 -- Query log for the paid endpoint itself — not a scoring input, just revenue
 -- / usage visibility (call volume, which agent frameworks are hitting it —
--- see brief's "Distribution / Go-to-Market").
+-- see brief's "Distribution / Go-to-Market") and, since 2026-08-12, the
+-- observability data for the pre-payment-primitive adoption hypothesis
+-- (see README "Observability" / src/index.ts getMetricsSummary).
 CREATE TABLE IF NOT EXISTS query_log (
   id                      INTEGER PRIMARY KEY AUTOINCREMENT,
   queried_wallet_address  TEXT NOT NULL,
   payer_address           TEXT,
   tx_hash                 TEXT,
+  -- Historical placeholder column: every row before 2026-08-12 has the
+  -- literal string "settled" here, not a real tier — onAfterSettlement
+  -- (src/index.ts) didn't have access to the tool handler's return value
+  -- at the time. Fixed 2026-08-12 via a closure-captured result (see
+  -- src/index.ts createServer) — rows from that point on carry the real
+  -- trust_tier. Column kept (not renamed) for continuity; `recommendation`
+  -- below is the new, complete field and what getMetricsSummary reads.
   tier_returned           TEXT,
+  -- Added 2026-08-12. 'PROCEED' | 'CAUTION' | 'INSUFFICIENT_SIGNAL' | NULL
+  -- (NULL only for rows logged before this column existed).
+  recommendation          TEXT,
+  -- Added 2026-08-12. Wall-clock ms from request start to settlement,
+  -- captured in src/index.ts. NULL for pre-existing rows.
+  latency_ms              INTEGER,
   queried_at              INTEGER NOT NULL
 );

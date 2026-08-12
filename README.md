@@ -1,24 +1,43 @@
 # merchant-check-mcp
 
-Merchant-risk/reputation-scoring MCP server for **Gradient Decisions**. Shopping
-agents call `check_merchant` before purchase to get a trust tier and
-price-fairness read on a merchant, paid per-query via x402. See the original
-build brief for full product context; this file tracks what's actually built,
+**Gradient Decisions provides merchant intelligence for autonomous
+commerce.** `x402 Merchant Check` evaluates observable on-chain payment
+behavior so agents can make more informed decisions before paying
+unfamiliar x402 merchants. Agent-native, machine-readable, x402-native —
+$0.01 per check, paid via x402. It is a pre-payment decision primitive, not
+a certification, a guarantee of safety, or a replacement for an agent's own
+payment policy. See [INTEGRATION.md](INTEGRATION.md) for the full
+discover → check → decide → pay flow, the 402-response-to-input mapping,
+and the exact response shape. This file tracks what's actually built,
 what's stubbed, and what needs you before this goes further.
+
+```
+DISCOVER → IDENTIFY PAYMENT DESTINATION → GRADIENT MERCHANT CHECK → AGENT PAYMENT POLICY → X402 PAYMENT
+```
 
 ## Status: two live surfaces, one product
 
 - **Agents**: `https://mcp.gradientdecisions.com/mcp` — the paid
-  `check_merchant` MCP tool. Payment flow verified end-to-end (still on Base
-  Sepolia / testnet USDC — nothing here has touched mainnet or real funds):
-  free `tools/list` discovery → `tools/call` correctly 402s → demo client
-  builds and signs an x402 payment, submits it → facilitator settles it →
-  real tier comes back. See "Try it yourself" below.
+  `check_merchant` MCP tool. **Live on Base mainnet with real USDC**
+  (switched from Base Sepolia testnet — see "Going to mainnet"; real
+  settled payments confirmed in `query_log`, real tx hashes on Base). Merchant
+  coverage spans both Base and Solana (PayAI/Helius) — see "Solana data
+  source". Payment flow verified end-to-end: free `tools/list` discovery →
+  `tools/call` correctly 402s → agent builds and signs an x402 payment,
+  submits it → facilitator settles it → real tier comes back. See "Try it
+  yourself" below.
 - **Humans**: `https://gradientdecisions.com` — a public dashboard of every
-  scored merchant (375 real wallets as of the last refresh, sourced from the
-  x402 Bazaar — see "Data source"), searchable and filterable by tier and by
-  category (see "Categorization"). Same underlying data agents pay for via
-  MCP, free to browse. Raw JSON at `/api/wallets`.
+  scored merchant (381 real Base wallets as of the last refresh, sourced
+  from the x402 Bazaar — see "Data source" — plus Solana merchants from
+  PayAI/Helius, see "Solana data source"), searchable and filterable by
+  tier, chain, and category (see "Categorization"). Same underlying data
+  agents pay for via MCP, free to browse. Raw JSON at `/api/wallets`.
+  Chain-level trust-tier breakdowns are kept visible alongside the combined
+  figures, not merged away — see "Solana signal caveats" for why.
+
+Note: the two-chain merchant-signal *data* above is separate from this
+endpoint's own payment rail — `check_merchant` itself is still only paid via
+Base x402 (see "Payment flow" line above); nothing about that has changed.
 
 ## Categorization
 
@@ -237,6 +256,21 @@ documented, this uses `@modelcontextprotocol/sdk` directly, exactly as
 `@x402/mcp`'s own README examples do. `agents` isn't a dependency here at
 all.
 
+## Platform / website info
+
+Added 2026-08-12. `check_merchant` and the dashboard now surface the actual
+resource URL(s) (and service name, where the discovery feed gives one) a
+merchant wallet backs — e.g. `https://api.example.com/v1/weather` — not just
+the raw wallet address. This isn't new data collection: both Bazaar and
+PayAI already return a `resource` URL + `serviceName` per listing, it was
+previously only ever blended into `bazaar_description`'s free-text blob
+(for categorization) and thrown away otherwise. `MerchantSignalRow.
+platforms_json` (JSON array of `{url, serviceName}`, one wallet can back
+several resources) stores it structured now; `CheckMerchantOutput.platforms`
+surfaces it to callers; the dashboard's Platform column links to it
+directly. NULL/empty until a wallet's been ingested at least once — same
+status as `category`, not a scoring input.
+
 ## What's built
 
 - [`src/index.ts`](src/index.ts) — Worker entry point, routed by pathname
@@ -262,6 +296,14 @@ all.
 - [`src/refresh/indexer.ts`](src/refresh/indexer.ts) — `ChainDataSource`
   interface + `BazaarDataSource`, a real (not stubbed) implementation
   against the public x402 Bazaar. See "Data source" below.
+- [`src/refresh/solana-indexer.ts`](src/refresh/solana-indexer.ts) —
+  `PayAIDataSource`, the Solana counterpart to `BazaarDataSource`: PayAI
+  discovery + optional Helius payer-diversity augmentation. See "Solana
+  data source" below.
+- [`src/chains.ts`](src/chains.ts) — chain detection/address normalization
+  shared by every module that touches a wallet address, now that the store
+  holds both Base (0x-hex, case-insensitive) and Solana (base58,
+  case-sensitive) wallets in one table.
 - [`db/schema.sql`](db/schema.sql) — D1 schema. Applied to the live remote
   `merchant-signals` D1 database (`wrangler d1 execute --remote`).
 - [`scripts/backtest.ts`](scripts/backtest.ts) +
@@ -314,57 +356,176 @@ account creation has to be you, not me) or a custom chain indexer. Both are
 future work, not blocking anything currently running. `FixtureDataSource`
 is also available for local testing without live network access.
 
+## Solana data source
+
+Added 2026-08-12 (requirement: Solana carries real, live x402 volume today,
+not just testnet activity, so it feeds the same trust-tier scoring Base
+does — see `src/refresh/solana-indexer.ts` for the full implementation
+writeup). Two pieces:
+
+**Discovery — `PayAIDataSource`.** The brief's original plan was "Solana's
+x402 Agent Registry," but that name doesn't correspond to a real merchant
+catalog: `solana.com/agent-registry` turned out to be a *buyer*-side agent-
+identity product, not merchant discovery. The real functional equivalent is
+**PayAI Network's facilitator discovery feed**
+(`https://facilitator.payai.network/discovery/resources`) — confirmed live
+via direct curl during research: 25,928 total items, a mixed Base+Solana
+catalog in the same discovery-list JSON shape as x402 Bazaar. Free, public,
+no key. Unlike Bazaar, it has no `quality` field on any sampled item — no
+call-volume or unique-payer counts ship with the listing itself.
+
+**Payer-diversity augmentation — Helius (optional, `HELIUS_API_KEY`).** Fills
+the gap PayAI's discovery feed leaves. For each Solana merchant wallet PayAI
+surfaces, counts real USDC (SPL) transfers to that wallet via Helius's
+Enhanced Transactions API (`mainnet.helius-rpc.com` — not `api.helius.xyz`,
+which 401s; Helius moved this endpoint onto their RPC host, found the hard
+way via a live failed refresh, confirmed against their current docs) and the
+unique source addresses behind them — capped at 8 wallets, 1 page (100 txs)
+per wallet per refresh run. That cap is **not** Helius's free-tier limit
+(1M credits/month comfortably covers far more); it's this Cloudflare
+account's real, confirmed-live Worker subrequest budget: ~50 external
+fetches per invocation, shared across `BazaarDataSource` (≤20 pages),
+`PayAIDataSource`'s own discovery pages (≤5), Helius augmentation, and any
+first-time-wallet categorization calls to Anthropic (capped separately at 8
+per run in `src/refresh/index.ts`) — all in the *same* invocation, since
+`runRefresh` runs every source back-to-back. First deploy of this feature
+hit exactly this ceiling (`Too many subrequests by single Worker
+invocation`, caught via `wrangler tail` against a real production request,
+not simulated) before these caps existed. Raising Cloudflare's Workers plan
+(Bundled/Paid raises the ceiling to 1000) would remove the need for this
+tight a budget — a real option, left as a billing decision for you rather
+than done here. Wallets beyond the cap, or with `HELIUS_API_KEY` unset
+entirely, keep PayAI's bare listing (usually 0 calls / 0 payers) —
+`scoreMerchant()` reads that as insufficient data, not a trust signal either
+way, never a guess.
+
+**Why Helius and not x402scan's paid API.** x402scan (`x402scan.com`) is a
+chain-agnostic x402 explorer with its own real per-call paid API
+($0.01–0.02/call via x402, confirmed from its own OpenAPI spec) that would
+give richer, x402-specific merchant/transaction data than raw Helius
+transfer-counting can. Decided against it for this v1 for a concrete reason,
+not a blanket "avoid paid data" stance — using it would mean this backend
+autonomously holding and spending from a funded wallet on a schedule, a
+custody/architecture commitment bigger than "is $5–15/month reasonable."
+Helius's free tier gets real, live Solana payer-diversity data shipped now
+without that commitment. This isn't a closed door: once Helius-based data is
+live, the plan is to compare what it actually delivers against what
+x402scan's paid API would add on top, with real numbers instead of
+speculation, and revisit from there — see conversation history 2026-08-12
+for the fuller reasoning (the business-model symmetry point: an aggregator
+that itself charges for data isn't inherently wrong to pay a nominal fee
+for better upstream data — the open question is what marginal value it buys
+over what's already free, not whether spending is acceptable in principle).
+
+## Solana signal caveats
+
+Referenced from `db/schema.sql`'s `velocity_anomaly_flag` comment and
+`src/scoring.ts`'s per-signal cross-chain read — collected here in one place:
+
+- **Helius counts any USDC transfer, not specifically x402 payments.** A
+  merchant receiving USDC through some other channel (a direct transfer, an
+  unrelated payment app) looks like extra x402 volume. Bazaar has the
+  mirror-image gap on Base (undercounting — it only sees registered
+  listings). Neither source is ground truth; both are documented
+  approximations.
+- **`firstSeenAt` is window-bounded, not true wallet age**, for Solana rows —
+  it only reflects the earliest transfer within the 90-day lookback and the
+  3-page-per-wallet Helius cap, same null-vs-approximate tradeoff Bazaar-
+  sourced Base rows already have for this signal (Bazaar gives no
+  first-activity timestamp at all).
+- **Fee-payer sponsorship is NOT a misattribution risk.** Solana's x402
+  "exact" scheme cryptographically excludes the fee-payer from being
+  transfer source/authority/destination (see
+  `specs/schemes/exact/scheme_exact.md` in `x402-foundation/x402`) — a
+  counted transfer's source address is always the real payer, never a
+  sponsoring relayer. Verified against the spec directly, not assumed.
+- **Signal 6 (velocity/harness-break) is the one signal known NOT to
+  translate once implemented**, not just currently stubbed like it is on
+  Base. Solana settles roughly 4x faster (~0.5s vs Base's ~2s) — a
+  transaction-frequency threshold tuned on Base traffic would over-flag
+  entirely normal Solana activity as anomalous. Whoever builds this signal
+  needs Solana-specific thresholds, not Base's reused unmodified.
+- **Signal 2's diversity-ratio threshold (`LOW_PAYER_DIVERSITY_RATIO = 0.3`
+  in `src/scoring.ts`) is Base-calibrated, not cross-chain-validated.** The
+  ratio itself (`unique_payers / total_tx`) is dimensionless and should
+  translate in principle, but the specific cutoff was derived from 365 real
+  Base Bazaar merchants only. Treat it as an assumption until enough
+  Helius-augmented Solana rows exist to check it against real Solana payer
+  distributions.
+- **USDC decimals match across chains (both 6)** — cross-checked against
+  x402scan's own facilitator constants and Solana's official USDC mint
+  registry — so atomic-unit price comparisons in
+  `db/queries.ts getComparablePrices` are valid across Base and Solana
+  within the same category without any conversion step. This is the one
+  place cross-chain comparison is *intentionally* pooled rather than kept
+  separate — see that function's own comment for why.
+
 ## Done vs. still needed
 
-Done (testnet, this session):
+**Corrected 2026-08-12 — most of this list was stale**, written back when
+the deployment was still testnet-only; several "still needed" items below
+had actually already been completed and the list hadn't been updated to
+say so. Verified against the live deployment before rewriting, not just
+edited from memory.
+
+Done:
 - ✅ Cloudflare account authenticated (`wrangler login`, colin.cleven@gmail.com).
 - ✅ D1 database created (`merchant-signals`) and schema applied remotely.
-- ✅ `PAYOUT_ADDRESS` secret set — **currently a throwaway testnet keypair I
-  generated** (`0x497e...118b`, see `.env.demo`), not a real wallet you
-  control. Fine for testnet demoing; **must be replaced before mainnet** —
-  see below.
+- ✅ **Live on Base mainnet**, real `PAYOUT_ADDRESS` — confirmed via real
+  settled mainnet transactions with real tx hashes in `query_log` (I never
+  saw or handled the actual address value, consistent with this project's
+  security practice throughout).
 - ✅ Deployed to `mcp.gradientdecisions.com` (`custom_domain = true` in
   `wrangler.toml` auto-provisioned DNS + SSL since the zone was already on
   this Cloudflare account).
 - ✅ Two synthetic demo rows seeded into `merchant_signals` (see "Demo data").
-- ✅ Real data source wired and run: `BazaarDataSource` indexed 365 real Base
-  mainnet merchant wallets from the public x402 Bazaar (no account needed) —
-  97 scored `trusted`, 267 `caution`, plus the 1 synthetic `avoid` row.
+- ✅ Real data source wired and run: `BazaarDataSource` indexes real Base
+  mainnet merchant wallets from the public x402 Bazaar (no account needed).
 - ✅ Backtest passes against real data: 2/2 cases (`trusted` + `caution`,
   both real Bazaar merchants — see `scripts/labeled-wallets.json`). `avoid`
-  is explicitly unvalidated — no real bad-actor source exists yet (see
-  `_avoid_bucket` in that file for why a thin-history wallet isn't a valid
-  stand-in).
-- ✅ Manual refresh trigger (`POST /refresh`) as a workaround until the cron
-  attaches — see "Manual refresh trigger" below.
+  is still explicitly unvalidated — no real bad-actor source exists yet
+  (see `_avoid_bucket` in that file for why a thin-history wallet isn't a
+  valid stand-in) — genuinely still open, not corrected here.
+- ✅ Solana added as a second data source (2026-08-12): `chain` column
+  migrated onto remote D1, `PayAIDataSource` + Helius wired into
+  `runRefresh()` alongside `BazaarDataSource`, `check_merchant` output and
+  the dashboard both surface `chain`, tool descriptions rewritten for
+  semantic-intent matching mentioning both chains, `platforms` (merchant
+  website/API URLs) surfaced in output and dashboard — see "Solana data
+  source" and "Platform / website info" above.
+- ✅ `HELIUS_API_KEY` set and confirmed working — real Solana payer-diversity
+  data flowing (see "Solana data source").
+- ✅ `ANTHROPIC_API_KEY` set 2026-08-11, confirmed working, categorization
+  backlog processed.
+- ✅ Registry submission — live on the official MCP registry
+  (`com.gradientdecisions/merchant-check`) and indexed by third-party
+  directories (e.g. mcp.so) as a result. **Worth a periodic check**: these
+  directories may cache descriptions and not immediately reflect README/tool
+  changes made here — if something there looks stale, it's a caching lag on
+  their end, not necessarily a stale source here, but check both.
 
-Still needed:
-1. **A real `PAYOUT_ADDRESS`** before mainnet — a Base wallet address *you*
-   control. I don't hold keys or generate wallets for real funds; replace the
-   testnet throwaway with:
-   ```bash
-   wrangler secret put PAYOUT_ADDRESS
-   ```
-2. **`workers.dev` subdomain** — one dashboard click, see above, to attach
-   the cron and retire the manual-trigger workaround.
-3. **A real `avoid` example** for the backtest — needs either a genuine
+Still genuinely needed:
+1. **`workers.dev` subdomain** — one dashboard click (Cloudflare dashboard →
+   Workers menu, opening it the first time auto-provisions one) to attach
+   the cron trigger. Every deploy this session has logged the same "You need
+   a workers.dev subdomain" error for the cron schedule specifically — MCP
+   traffic and the dashboard are unaffected, only the *automatic* 4-hour
+   refresh; `POST /refresh` remains the working manual trigger until this
+   is done.
+2. **A real `avoid` example** for the backtest — needs either a genuine
    x402-specific bad-actor source (none found publicly — the tech's too new)
    or enough real usage data over time to observe one organically.
-4. **Registry submission** — once you're ready for real agents to find it,
-   submit the URL to MCP/agent tool registries. Explicit-permission action —
-   ask before I'd do this even once mainnet is live.
 
-✅ ~~`ANTHROPIC_API_KEY`~~ — set 2026-08-11, confirmed working, backlog
-processed. See "Categorization" for current distribution.
+## Going to mainnet (done)
 
-## Going to mainnet
-
-Everything currently points at Base Sepolia
-(`X402_NETWORK = "eip155:84532"` in `wrangler.toml`). Switching to
-`"eip155:8453"` (Base mainnet) means `PAYOUT_ADDRESS` starts receiving real
-USDC from real callers — don't do this until the backtest passes and you've
-decided you're ready to actually charge people. This is a one-line change,
-deliberately not automated.
+**Stale heading, kept for history — this already happened.** `X402_NETWORK`
+in `wrangler.toml` is `"eip155:8453"` (Base mainnet), not the Sepolia
+testnet value this section originally described. `PAYOUT_ADDRESS` receives
+real USDC from real callers; `query_log` has real settled Base mainnet
+transactions with real tx hashes, confirmed directly against remote D1 (see
+"Try it yourself" above). If this ever needs to move back to testnet for
+local dev, the value to change is the same one-line `X402_NETWORK` edit
+this section originally documented, just in reverse.
 
 ## Local dev limitation (this machine)
 

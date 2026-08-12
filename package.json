@@ -2,7 +2,7 @@
   "name": "merchant-check-mcp",
   "version": "0.1.0",
   "private": true,
-  "description": "MCP server that shopping agents ping before purchase to check merchant trustworthiness and price fairness, monetized via x402 micropayments. Part of Gradient Decisions.",
+  "description": "MCP server that shopping agents ping before purchase to check merchant trustworthiness and price fairness on Base or Solana, monetized via x402 micropayments. Part of Gradient Decisions.",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
@@ -12,7 +12,8 @@
     "backtest": "tsx scripts/backtest.ts",
     "demo": "node --env-file=.env.demo --import tsx scripts/demo-client.ts",
     "mainnet-test": "node --env-file=.env.mainnet-test --import tsx scripts/mainnet-live-test.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts/tsconfig.json"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts/tsconfig.json && tsc --noEmit -p test/tsconfig.json",
+    "test": "vitest run"
   },
   "dependencies": {
     "@coinbase/x402": "^2.1.0",
@@ -29,6 +30,7 @@
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "viem": "^2.55.13",
+    "vitest": "^4.1.10",
     "wrangler": "^4.0.0"
   }
 }
