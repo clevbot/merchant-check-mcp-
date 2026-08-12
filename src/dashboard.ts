@@ -1,9 +1,11 @@
-import type { Env } from "./types";
+import type { DataSufficiency, Env, Recommendation, Tier } from "./types";
 import { BASE_MAINNET_NETWORK } from "./refresh/indexer";
 import { SOLANA_MAINNET_NETWORK } from "./refresh/solana-indexer";
 import { CATEGORIES } from "./categorize/types";
+import { MIN_TX_FOR_CONFIDENCE } from "./scoring";
+import { deriveRecommendation } from "./tool";
 
-interface DashboardRow {
+interface RawDashboardRow {
   wallet_address: string;
   chain: string;
   tier: string;
@@ -18,14 +20,25 @@ interface DashboardRow {
   platforms_json: string | null;
 }
 
-type TierCounts = { trusted: number; caution: number; avoid: number };
+/**
+ * `recommendation` is computed here from the same stored `tier` +
+ * `total_tx_count`, reusing src/tool.ts's deriveRecommendation rather than
+ * a second copy of that logic — this is display-time derivation, not a
+ * new stored column, so it can never drift out of sync with what
+ * check_merchant itself returns for the same wallet.
+ */
+interface DashboardRow extends RawDashboardRow {
+  recommendation: Recommendation;
+}
+
+type RecommendationCounts = { proceed: number; caution: number; insufficientSignal: number };
 
 interface DashboardData {
   rows: DashboardRow[];
   /** Combined across both chains — shown alongside, never instead of, the per-chain breakdown below. See requirement note at renderDashboardHtml. */
-  counts: TierCounts;
-  /** Kept separate from `counts` deliberately — see README "Solana signal caveats": Solana's ~4x faster finality means signal 6 (velocity/harness-break) can't yet be assumed to behave the same as it does on Base, so a single pooled "trusted %" would blend two not-yet-cross-validated methodologies. Both breakdowns stay available even though signal 6 is currently a no-op (always 0) on both chains — the split doesn't cost anything and stays correct once signal 6 is real. */
-  countsByChain: { base: TierCounts; solana: TierCounts };
+  counts: RecommendationCounts;
+  /** Kept separate from `counts` deliberately — see README "Solana signal caveats": Solana's ~4x faster finality means signal 6 (velocity/harness-break) can't yet be assumed to behave the same as it does on Base, so a single pooled "proceed %" would blend two not-yet-cross-validated methodologies. Both breakdowns stay available even though signal 6 is currently a no-op (always 0) on both chains — the split doesn't cost anything and stays correct once signal 6 is real. */
+  countsByChain: { base: RecommendationCounts; solana: RecommendationCounts };
   lastRefreshedAt: number | null;
 }
 
@@ -35,7 +48,7 @@ export async function getDashboardData(env: Env): Promise<DashboardData> {
   // mainnet) — excludes the demo rows' Base Sepolia network as a second,
   // independent guard against the same failure mode (fake/testnet data
   // reaching the public dashboard), not merely a duplicate of is_demo=0.
-  const { results } = await env.DB.prepare(
+  const { results: rawResults } = await env.DB.prepare(
     `SELECT wallet_address, chain, tier, reasons_json, total_tx_count, unique_payer_count,
             wallet_age_days, refreshed_at, category, platforms_json
      FROM merchant_signals
@@ -44,17 +57,26 @@ export async function getDashboardData(env: Env): Promise<DashboardData> {
      LIMIT 1000`,
   )
     .bind(BASE_MAINNET_NETWORK, SOLANA_MAINNET_NETWORK)
-    .all<DashboardRow>();
+    .all<RawDashboardRow>();
 
-  const counts: TierCounts = { trusted: 0, caution: 0, avoid: 0 };
-  const countsByChain = { base: { trusted: 0, caution: 0, avoid: 0 }, solana: { trusted: 0, caution: 0, avoid: 0 } };
+  const results: DashboardRow[] = rawResults.map((row) => {
+    const dataSufficiency: DataSufficiency = row.total_tx_count < MIN_TX_FOR_CONFIDENCE ? "INSUFFICIENT" : "SUFFICIENT";
+    // tier is only ever null in D1 for rows that predate scoring — treat as caution (the same fallback scoreMerchant's own tier column default would imply) rather than crashing the dashboard on a row this old.
+    const tier = (row.tier === "trusted" || row.tier === "caution" || row.tier === "avoid" ? row.tier : "caution") as Tier;
+    return { ...row, recommendation: deriveRecommendation(dataSufficiency, tier) };
+  });
+
+  const counts: RecommendationCounts = { proceed: 0, caution: 0, insufficientSignal: 0 };
+  const countsByChain = {
+    base: { proceed: 0, caution: 0, insufficientSignal: 0 },
+    solana: { proceed: 0, caution: 0, insufficientSignal: 0 },
+  };
   let lastRefreshedAt: number | null = null;
   for (const row of results) {
-    if (row.tier === "trusted" || row.tier === "caution" || row.tier === "avoid") {
-      counts[row.tier]++;
-      if (row.chain === "base" || row.chain === "solana") {
-        countsByChain[row.chain][row.tier]++;
-      }
+    const key = row.recommendation === "PROCEED" ? "proceed" : row.recommendation === "CAUTION" ? "caution" : "insufficientSignal";
+    counts[key]++;
+    if (row.chain === "base" || row.chain === "solana") {
+      countsByChain[row.chain][key]++;
     }
     if (lastRefreshedAt === null || row.refreshed_at > lastRefreshedAt) {
       lastRefreshedAt = row.refreshed_at;
@@ -120,11 +142,24 @@ function renderPlatformsCell(platformsJson: string | null): string {
   return shown + extra;
 }
 
+/** 'proceed' | 'caution' | 'insufficient' — used for both the CSS class suffix and the data-recommendation filter attribute. */
+function recommendationSlug(rec: Recommendation): string {
+  if (rec === "PROCEED") return "proceed";
+  if (rec === "CAUTION") return "caution";
+  return "insufficient";
+}
+
+function recommendationLabel(rec: Recommendation): string {
+  if (rec === "PROCEED") return "Proceed";
+  if (rec === "CAUTION") return "Caution";
+  return "Insufficient signal";
+}
+
 export function renderDashboardHtml(data: DashboardData): string {
   const { rows, counts, countsByChain, lastRefreshedAt } = data;
-  const total = counts.trusted + counts.caution + counts.avoid;
+  const total = counts.proceed + counts.caution + counts.insufficientSignal;
   const pct = (n: number, denom: number) => (denom > 0 ? Math.round((n / denom) * 1000) / 10 : 0);
-  const chainTotal = (c: TierCounts) => c.trusted + c.caution + c.avoid;
+  const chainTotal = (c: RecommendationCounts) => c.proceed + c.caution + c.insufficientSignal;
   const baseTotal = chainTotal(countsByChain.base);
   const solanaTotal = chainTotal(countsByChain.solana);
 
@@ -133,10 +168,15 @@ export function renderDashboardHtml(data: DashboardData): string {
       const reasons: string[] = r.reasons_json ? JSON.parse(r.reasons_json) : [];
       const category = r.category ?? "uncategorized";
       const chain = r.chain === "solana" ? "solana" : "base";
-      return `<tr data-tier="${r.tier}" data-category="${category}" data-chain="${chain}" data-address="${escapeHtml(r.wallet_address)}">
+      const recSlug = recommendationSlug(r.recommendation);
+      // title carries the richer trust_tier detail (TRUSTED/CAUTION/AVOID) on
+      // hover — recommendation is the primary, product-facing label per the
+      // pre-payment-primitive rework (see INTEGRATION.md); trust_tier is
+      // supplementary, not hidden, just not the headline.
+      return `<tr data-recommendation="${recSlug}" data-category="${category}" data-chain="${chain}" data-address="${escapeHtml(r.wallet_address)}">
         <td><code class="addr" title="${escapeHtml(r.wallet_address)}">${truncateAddress(r.wallet_address)}</code></td>
         <td><span class="pill pill-chain">${chain}</span></td>
-        <td><span class="badge badge-${r.tier}">${r.tier}</span></td>
+        <td><span class="badge badge-${recSlug}" title="trust_tier: ${escapeHtml(r.tier.toUpperCase())}">${recommendationLabel(r.recommendation)}</span></td>
         <td>${renderPlatformsCell(r.platforms_json)}</td>
         <td><span class="pill">${escapeHtml(category.replace(/_/g, " "))}</span></td>
         <td class="num">${r.total_tx_count.toLocaleString()}</td>
@@ -151,19 +191,19 @@ export function renderDashboardHtml(data: DashboardData): string {
     .join("");
 
   return `<title>x402 Merchant Check — Gradient Decisions</title>
-<meta name="description" content="Context for agentic buying decisions: live merchant trust tiers for x402 agent commerce, scored from on-chain signals.">
+<meta name="description" content="Pre-payment merchant intelligence for x402 agents: live recommendations for Base and Solana merchants, scored from observable on-chain payment behavior.">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   :root {
     --bg: #f7f7f8; --surface: #ffffff; --border: #e4e4e7; --text: #18181b; --text-dim: #6b7280;
-    --trusted: #16a34a; --trusted-bg: #dcfce7; --caution: #b45309; --caution-bg: #fef3c7;
-    --avoid: #dc2626; --avoid-bg: #fee2e2; --accent: #4f46e5;
+    --proceed: #16a34a; --proceed-bg: #dcfce7; --caution: #b45309; --caution-bg: #fef3c7;
+    --insufficient: #6b7280; --insufficient-bg: #f1f1f3; --accent: #4f46e5;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0b0b0d; --surface: #17171a; --border: #2a2a2e; --text: #f4f4f5; --text-dim: #9ca3af;
-      --trusted: #4ade80; --trusted-bg: #14532d; --caution: #fbbf24; --caution-bg: #78350f;
-      --avoid: #f87171; --avoid-bg: #7f1d1d; --accent: #818cf8;
+      --proceed: #4ade80; --proceed-bg: #14532d; --caution: #fbbf24; --caution-bg: #78350f;
+      --insufficient: #9ca3af; --insufficient-bg: #27272a; --accent: #818cf8;
     }
   }
   * { box-sizing: border-box; }
@@ -182,13 +222,13 @@ export function renderDashboardHtml(data: DashboardData): string {
   }
   .stat-card .n { font-size: 1.6rem; font-weight: 650; }
   .stat-card .label { font-size: .8rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: .03em; }
-  .stat-card.trusted .n { color: var(--trusted); }
+  .stat-card.proceed .n { color: var(--proceed); }
   .stat-card.caution .n { color: var(--caution); }
-  .stat-card.avoid .n { color: var(--avoid); }
+  .stat-card.insufficient .n { color: var(--insufficient); }
   .bars { display: flex; height: 10px; border-radius: 6px; overflow: hidden; margin-bottom: 2rem; border: 1px solid var(--border); }
-  .bar-trusted { background: var(--trusted); }
+  .bar-proceed { background: var(--proceed); }
   .bar-caution { background: var(--caution); }
-  .bar-avoid { background: var(--avoid); }
+  .bar-insufficient { background: var(--insufficient); }
   .controls { display: flex; gap: .5rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
   .controls input[type=search] {
     flex: 1; min-width: 200px; padding: .55rem .8rem; border-radius: 8px; border: 1px solid var(--border);
@@ -206,9 +246,9 @@ export function renderDashboardHtml(data: DashboardData): string {
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   code.addr { font-family: ui-monospace, SFMono-Regular, monospace; font-size: .82rem; }
   .badge { display: inline-block; padding: .15rem .55rem; border-radius: 999px; font-size: .76rem; font-weight: 600; text-transform: capitalize; }
-  .badge-trusted { background: var(--trusted-bg); color: var(--trusted); }
+  .badge-proceed { background: var(--proceed-bg); color: var(--proceed); }
   .badge-caution { background: var(--caution-bg); color: var(--caution); }
-  .badge-avoid { background: var(--avoid-bg); color: var(--avoid); }
+  .badge-insufficient { background: var(--insufficient-bg); color: var(--insufficient); }
   .reasons { max-width: 320px; }
   .pill {
     display: inline-block; padding: .1rem .5rem; border-radius: 6px; font-size: .76rem;
@@ -253,14 +293,14 @@ export function renderDashboardHtml(data: DashboardData): string {
 
   <div class="stats">
     <div class="stat-card"><div class="n">${total.toLocaleString()}</div><div class="label">Merchants indexed</div></div>
-    <div class="stat-card trusted"><div class="n">${counts.trusted}</div><div class="label">Trusted (${pct(counts.trusted, total)}%)</div></div>
+    <div class="stat-card proceed"><div class="n">${counts.proceed}</div><div class="label">Proceed (${pct(counts.proceed, total)}%)</div></div>
     <div class="stat-card caution"><div class="n">${counts.caution}</div><div class="label">Caution (${pct(counts.caution, total)}%)</div></div>
-    <div class="stat-card avoid"><div class="n">${counts.avoid}</div><div class="label">Avoid (${pct(counts.avoid, total)}%)</div></div>
+    <div class="stat-card insufficient"><div class="n">${counts.insufficientSignal}</div><div class="label">Insufficient signal (${pct(counts.insufficientSignal, total)}%)</div></div>
   </div>
   <div class="bars">
-    <div class="bar-trusted" style="width:${pct(counts.trusted, total)}%"></div>
+    <div class="bar-proceed" style="width:${pct(counts.proceed, total)}%"></div>
     <div class="bar-caution" style="width:${pct(counts.caution, total)}%"></div>
-    <div class="bar-avoid" style="width:${pct(counts.avoid, total)}%"></div>
+    <div class="bar-insufficient" style="width:${pct(counts.insufficientSignal, total)}%"></div>
   </div>
 
   <div class="chain-breakdown">
@@ -268,14 +308,14 @@ export function renderDashboardHtml(data: DashboardData): string {
       <div class="chain-title">Base</div>
       <div class="chain-stats">
         <span>${baseTotal.toLocaleString()} merchants</span>
-        <span class="trusted"><b>${pct(countsByChain.base.trusted, baseTotal)}%</b> trusted</span>
+        <span class="proceed"><b>${pct(countsByChain.base.proceed, baseTotal)}%</b> proceed</span>
       </div>
     </div>
     <div class="chain-card">
       <div class="chain-title">Solana</div>
       <div class="chain-stats">
         <span>${solanaTotal.toLocaleString()} merchants</span>
-        <span class="trusted"><b>${pct(countsByChain.solana.trusted, solanaTotal)}%</b> trusted</span>
+        <span class="proceed"><b>${pct(countsByChain.solana.proceed, solanaTotal)}%</b> proceed</span>
       </div>
     </div>
   </div>
@@ -288,10 +328,10 @@ export function renderDashboardHtml(data: DashboardData): string {
 
   <div class="controls">
     <input type="search" id="search" placeholder="Search wallet address…" autocomplete="off">
-    <button class="filter-btn active" data-tier="all">All</button>
-    <button class="filter-btn" data-tier="trusted">Trusted</button>
-    <button class="filter-btn" data-tier="caution">Caution</button>
-    <button class="filter-btn" data-tier="avoid">Avoid</button>
+    <button class="filter-btn active" data-recommendation="all">All</button>
+    <button class="filter-btn" data-recommendation="proceed">Proceed</button>
+    <button class="filter-btn" data-recommendation="caution">Caution</button>
+    <button class="filter-btn" data-recommendation="insufficient">Insufficient signal</button>
     <select id="chain-filter">
       <option value="all">All chains</option>
       <option value="base">Base</option>
@@ -302,7 +342,7 @@ export function renderDashboardHtml(data: DashboardData): string {
 
   <div class="overflow">
     <table id="tbl">
-      <thead><tr><th>Wallet</th><th>Chain</th><th>Tier</th><th>Platform</th><th>Category</th><th class="num">Calls (30d)</th><th class="num">Unique payers</th><th>Reasons</th></tr></thead>
+      <thead><tr><th>Wallet</th><th>Chain</th><th>Recommendation</th><th>Platform</th><th>Category</th><th class="num">Calls (30d)</th><th class="num">Unique payers</th><th>Reasons</th></tr></thead>
       <tbody>${rowsHtml || ""}</tbody>
     </table>
     <p class="empty" id="empty" style="display:none">No wallets match.</p>
@@ -324,7 +364,7 @@ export function renderDashboardHtml(data: DashboardData): string {
   const chainFilter = document.getElementById('chain-filter');
   const rows = [...document.querySelectorAll('#tbl tbody tr')];
   const empty = document.getElementById('empty');
-  let activeTier = 'all';
+  let activeRecommendation = 'all';
 
   function applyFilter() {
     const q = search.value.trim().toLowerCase();
@@ -332,7 +372,7 @@ export function renderDashboardHtml(data: DashboardData): string {
     const activeChain = chainFilter.value;
     let visible = 0;
     for (const row of rows) {
-      const tierOk = activeTier === 'all' || row.dataset.tier === activeTier;
+      const recOk = activeRecommendation === 'all' || row.dataset.recommendation === activeRecommendation;
       const categoryOk = activeCategory === 'all' || row.dataset.category === activeCategory;
       const chainOk = activeChain === 'all' || row.dataset.chain === activeChain;
       // Search is a plain case-insensitive substring match for UX
@@ -340,7 +380,7 @@ export function renderDashboardHtml(data: DashboardData): string {
       // so it doesn't risk corrupting case-sensitive Solana addresses the
       // way a stored/queried lowercase would (see src/chains.ts).
       const searchOk = !q || row.dataset.address.toLowerCase().includes(q);
-      const show = tierOk && categoryOk && chainOk && searchOk;
+      const show = recOk && categoryOk && chainOk && searchOk;
       row.style.display = show ? '' : 'none';
       if (show) visible++;
     }
@@ -353,7 +393,7 @@ export function renderDashboardHtml(data: DashboardData): string {
   buttons.forEach((btn) => btn.addEventListener('click', () => {
     buttons.forEach((b) => b.classList.remove('active'));
     btn.classList.add('active');
-    activeTier = btn.dataset.tier;
+    activeRecommendation = btn.dataset.recommendation;
     applyFilter();
   }));
 </script>`;
