@@ -49,6 +49,18 @@ describe("scoreMerchant", () => {
     expect(result.riskFlags).toEqual(["low_payer_diversity"]);
   });
 
+  it("does NOT flag low_payer_diversity for a high-frequency-use API with many real distinct payers, even at a very low ratio (regression test — real production case: a Twitter search API, 84,158 calls / 51 payers, ratio 0.0006, was wrongly flagged before MIN_PAYERS_FOR_BREADTH_OVERRIDE was added)", () => {
+    const result = scoreMerchant(row({ wallet_age_days: 365, unique_payer_count: 51, total_tx_count: 84158 }));
+    expect(result.riskFlags).not.toContain("low_payer_diversity");
+    expect(result.tier).toBe("trusted");
+  });
+
+  it("still flags low_payer_diversity for genuinely few payers even at high volume, below the breadth override floor", () => {
+    // 49 payers is one under MIN_PAYERS_FOR_BREADTH_OVERRIDE (50) — should still flag.
+    const result = scoreMerchant(row({ wallet_age_days: 365, unique_payer_count: 49, total_tx_count: 84158 }));
+    expect(result.riskFlags).toContain("low_payer_diversity");
+  });
+
   it("lands on avoid once two or more risk signals fire together", () => {
     // new wallet (< 14 days) AND concentrated payers -> two flags.
     const result = scoreMerchant(
@@ -86,15 +98,20 @@ describe("scorePriceFairness", () => {
     expect(scorePriceFairness(1000, [900, 1100])).toBe("unknown");
   });
 
-  it("returns fair within 25% of the median", () => {
+  it("returns fair for a price close to the median", () => {
     expect(scorePriceFairness(1050, [1000, 1000, 1000])).toBe("fair");
   });
 
-  it("returns high at or above 1.25x the median", () => {
-    expect(scorePriceFairness(1250, [1000, 1000, 1000])).toBe("high");
+  it("returns fair even 2x-2.9x the median (real category price spread — see HIGH_PRICE_RATIO comment)", () => {
+    expect(scorePriceFairness(2000, [1000, 1000, 1000])).toBe("fair");
+    expect(scorePriceFairness(2900, [1000, 1000, 1000])).toBe("fair");
   });
 
-  it("returns low at or below 0.75x the median", () => {
-    expect(scorePriceFairness(750, [1000, 1000, 1000])).toBe("low");
+  it("returns high at or above 3x the median", () => {
+    expect(scorePriceFairness(3000, [1000, 1000, 1000])).toBe("high");
+  });
+
+  it("returns low at or below 0.35x the median", () => {
+    expect(scorePriceFairness(350, [1000, 1000, 1000])).toBe("low");
   });
 });

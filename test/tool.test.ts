@@ -50,6 +50,12 @@ describe("derivePayerConcentration", () => {
   it("returns LOW concentration for a broad payer base", () => {
     expect(derivePayerConcentration(80, 100)).toBe("LOW");
   });
+
+  it("returns LOW concentration once absolute payer count clears the breadth override, even at a very low ratio", () => {
+    // Same real production case as scoring.test.ts's regression test: 51
+    // payers / 84,158 calls, ratio 0.0006 — would be HIGH under ratio alone.
+    expect(derivePayerConcentration(51, 84158)).toBe("LOW");
+  });
 });
 
 describe("parsePlatforms", () => {
@@ -69,12 +75,18 @@ describe("parsePlatforms", () => {
 
 // --- checkMerchant integration tests, against a hand-written fake D1 -------
 
+interface FakePriceRow {
+  wallet_address: string;
+  category: string;
+  price_atomic: number;
+}
+
 class FakeStatement {
   private args: unknown[] = [];
   constructor(
     private sql: string,
     private merchantSignals: Record<string, MerchantSignalRow>,
-    private priceObservations: { price_atomic: number }[],
+    private priceObservations: FakePriceRow[],
   ) {}
   bind(...args: unknown[]) {
     this.args = args;
@@ -89,7 +101,19 @@ class FakeStatement {
   }
   async all<T>(): Promise<{ results: T[] }> {
     if (this.sql.includes("FROM price_observations")) {
-      return { results: this.priceObservations as unknown as T[] };
+      // Distinguish getOwnPrices ("wallet_address = ?") from
+      // getComparablePrices ("wallet_address != ?") by SQL shape, same as
+      // the two real queries in src/db/queries.ts differ.
+      if (this.sql.includes("wallet_address = ?")) {
+        const wallet = this.args[0] as string;
+        return { results: this.priceObservations.filter((p) => p.wallet_address === wallet) as unknown as T[] };
+      }
+      if (this.sql.includes("wallet_address != ?")) {
+        const [category, excludeWallet] = this.args as [string, string];
+        return {
+          results: this.priceObservations.filter((p) => p.category === category && p.wallet_address !== excludeWallet) as unknown as T[],
+        };
+      }
     }
     return { results: [] };
   }
@@ -98,7 +122,7 @@ class FakeStatement {
   }
 }
 
-function fakeEnv(merchantSignals: Record<string, MerchantSignalRow>, priceObservations: { price_atomic: number }[] = []): Env {
+function fakeEnv(merchantSignals: Record<string, MerchantSignalRow>, priceObservations: FakePriceRow[] = []): Env {
   const DB = {
     prepare(sql: string) {
       return new FakeStatement(sql, merchantSignals, priceObservations);
@@ -229,6 +253,7 @@ describe("checkMerchant", () => {
       "risk_flags",
       "reasons",
       "price_fairness",
+      "pricing",
       "category",
       "chain",
       "platforms",
@@ -236,5 +261,48 @@ describe("checkMerchant", () => {
     for (const key of expectedKeys) {
       expect(result).toHaveProperty(key);
     }
+    expect(result.pricing).toEqual({ advertised_prices_atomic: [], fairness_vs_category: "unknown" });
+  });
+
+  it("surfaces the merchant's own advertised prices unconditionally, without a caller-supplied price", async () => {
+    const env = fakeEnv(
+      { [VALID_BASE_ADDRESS]: fixtureRow({ wallet_address: VALID_BASE_ADDRESS, category: "data_api" }) },
+      [{ wallet_address: VALID_BASE_ADDRESS, category: "data_api", price_atomic: 10_000 }],
+    );
+    const result = await checkMerchant(env, { merchant_wallet_address: VALID_BASE_ADDRESS });
+    expect(result.pricing.advertised_prices_atomic).toEqual([10_000]);
+    // Only 1 comparable peer price exists (none, in fact) -> scorePriceFairness needs >=3 -> unknown.
+    expect(result.pricing.fairness_vs_category).toBe("unknown");
+  });
+
+  it("computes fairness_vs_category against category peers, excluding the merchant's own rows", async () => {
+    const env = fakeEnv(
+      { [VALID_BASE_ADDRESS]: fixtureRow({ wallet_address: VALID_BASE_ADDRESS, category: "data_api" }) },
+      [
+        { wallet_address: VALID_BASE_ADDRESS, category: "data_api", price_atomic: 50_000 }, // this merchant: $0.05
+        { wallet_address: "0xpeer1", category: "data_api", price_atomic: 10_000 },
+        { wallet_address: "0xpeer2", category: "data_api", price_atomic: 10_000 },
+        { wallet_address: "0xpeer3", category: "data_api", price_atomic: 10_000 },
+      ],
+    );
+    const result = await checkMerchant(env, { merchant_wallet_address: VALID_BASE_ADDRESS });
+    // $0.05 vs a $0.01 peer median -> ratio 5.0, well above the 1.25 "high" cutoff.
+    expect(result.pricing.fairness_vs_category).toBe("high");
+  });
+
+  it("still computes price_fairness for a caller-supplied price independently of pricing.fairness_vs_category", async () => {
+    const env = fakeEnv(
+      { [VALID_BASE_ADDRESS]: fixtureRow({ wallet_address: VALID_BASE_ADDRESS, category: "data_api" }) },
+      [
+        { wallet_address: "0xpeer1", category: "data_api", price_atomic: 10_000 },
+        { wallet_address: "0xpeer2", category: "data_api", price_atomic: 10_000 },
+        { wallet_address: "0xpeer3", category: "data_api", price_atomic: 10_000 },
+      ],
+    );
+    const result = await checkMerchant(env, { merchant_wallet_address: VALID_BASE_ADDRESS, price: 0.01 });
+    expect(result.price_fairness).toBe("fair");
+    // No price_observations rows for this wallet itself -> pricing stays empty/unknown, independent of price_fairness above.
+    expect(result.pricing.advertised_prices_atomic).toEqual([]);
+    expect(result.pricing.fairness_vs_category).toBe("unknown");
   });
 });

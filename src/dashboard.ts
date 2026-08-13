@@ -1,9 +1,9 @@
-import type { DataSufficiency, Env, Recommendation, Tier } from "./types";
+import type { Confidence, DataSufficiency, Env, PayerConcentration, PriceFairness, Recommendation, Tier } from "./types";
 import { BASE_MAINNET_NETWORK } from "./refresh/indexer";
 import { SOLANA_MAINNET_NETWORK } from "./refresh/solana-indexer";
 import { CATEGORIES } from "./categorize/types";
-import { MIN_TX_FOR_CONFIDENCE } from "./scoring";
-import { deriveRecommendation } from "./tool";
+import { MIN_TX_FOR_CONFIDENCE, median, scorePriceFairness } from "./scoring";
+import { deriveConfidence, derivePayerConcentration, deriveRecommendation } from "./tool";
 
 interface RawDashboardRow {
   wallet_address: string;
@@ -21,14 +21,29 @@ interface RawDashboardRow {
 }
 
 /**
- * `recommendation` is computed here from the same stored `tier` +
- * `total_tx_count`, reusing src/tool.ts's deriveRecommendation rather than
- * a second copy of that logic — this is display-time derivation, not a
- * new stored column, so it can never drift out of sync with what
- * check_merchant itself returns for the same wallet.
+ * recommendation/confidence/payer_concentration are computed here from the
+ * same stored tier/total_tx_count/unique_payer_count, reusing src/tool.ts's
+ * own derive* functions rather than second copies of that logic — this is
+ * display-time derivation, not new stored columns, so it can never drift
+ * out of sync with what check_merchant itself returns for the same wallet.
+ *
+ * ownPricesAtomic/priceFairness are genuinely new here (2026-08-13):
+ * price_observations has always held each wallet's own currently-advertised
+ * price(s) per resource (see db/schema.sql), collected every refresh cycle,
+ * but nothing ever surfaced it on the dashboard — this was flagged directly
+ * ("what are the price differences — this is data we should have readily
+ * available") and was a fair complaint, since it really was already sitting
+ * in the store unused. priceFairness compares each wallet's own median
+ * advertised price against its category peers' median, the same comparison
+ * check_merchant does when a caller supplies `price` — computed here for
+ * every wallet unconditionally, without needing a caller-supplied price.
  */
 interface DashboardRow extends RawDashboardRow {
   recommendation: Recommendation;
+  confidence: Confidence;
+  payerConcentration: PayerConcentration;
+  ownPricesAtomic: number[];
+  priceFairness: PriceFairness;
 }
 
 type RecommendationCounts = { proceed: number; caution: number; insufficientSignal: number };
@@ -59,11 +74,55 @@ export async function getDashboardData(env: Env): Promise<DashboardData> {
     .bind(BASE_MAINNET_NETWORK, SOLANA_MAINNET_NETWORK)
     .all<RawDashboardRow>();
 
+  // Category-snapshot price rows only (payer_address IS NULL — see
+  // db/schema.sql price_observations for the other kind of row this table
+  // holds). One row per (wallet, resource) the wallet backs, so a wallet
+  // with several resources has several rows here, potentially at different
+  // prices — kept as a list per wallet rather than collapsed, so the UI can
+  // show a real range instead of a single number that hides spread.
+  // pricesByCategory keeps {wallet, price} pairs, not bare numbers, so each
+  // wallet's own rows can be excluded from its own peer comparison below
+  // (same reasoning as db/queries.ts getComparablePrices: comparing a
+  // wallet against a peer set that includes itself understates how it
+  // actually differs from real peers).
+  const { results: priceRows } = await env.DB.prepare(
+    `SELECT wallet_address, resource_type AS category, price_atomic
+     FROM price_observations WHERE payer_address IS NULL`,
+  ).all<{ wallet_address: string; category: string; price_atomic: number }>();
+
+  const pricesByWallet = new Map<string, number[]>();
+  const pricesByCategory = new Map<string, { wallet: string; price: number }[]>();
+  for (const p of priceRows) {
+    pricesByWallet.set(p.wallet_address, [...(pricesByWallet.get(p.wallet_address) ?? []), p.price_atomic]);
+    pricesByCategory.set(p.category, [...(pricesByCategory.get(p.category) ?? []), { wallet: p.wallet_address, price: p.price_atomic }]);
+  }
+
   const results: DashboardRow[] = rawResults.map((row) => {
     const dataSufficiency: DataSufficiency = row.total_tx_count < MIN_TX_FOR_CONFIDENCE ? "INSUFFICIENT" : "SUFFICIENT";
     // tier is only ever null in D1 for rows that predate scoring — treat as caution (the same fallback scoreMerchant's own tier column default would imply) rather than crashing the dashboard on a row this old.
     const tier = (row.tier === "trusted" || row.tier === "caution" || row.tier === "avoid" ? row.tier : "caution") as Tier;
-    return { ...row, recommendation: deriveRecommendation(dataSufficiency, tier) };
+
+    const ownPricesAtomic = pricesByWallet.get(row.wallet_address) ?? [];
+    const ownMedian = median(ownPricesAtomic);
+    // category can be NULL (uncategorized) — no meaningful peer set to
+    // compare against in that case, priceFairness stays "unknown" rather
+    // than comparing across unrelated categories.
+    let priceFairness: PriceFairness = "unknown";
+    if (ownMedian !== null && row.category) {
+      const peers = (pricesByCategory.get(row.category) ?? [])
+        .filter((p) => p.wallet !== row.wallet_address)
+        .map((p) => p.price);
+      priceFairness = scorePriceFairness(ownMedian, peers);
+    }
+
+    return {
+      ...row,
+      recommendation: deriveRecommendation(dataSufficiency, tier),
+      confidence: deriveConfidence(row.total_tx_count),
+      payerConcentration: derivePayerConcentration(row.unique_payer_count, row.total_tx_count),
+      ownPricesAtomic,
+      priceFairness,
+    };
   });
 
   const counts: RecommendationCounts = { proceed: 0, caution: 0, insufficientSignal: 0 };
@@ -93,7 +152,8 @@ export function dashboardDataToJson(data: DashboardData): Response {
   });
 }
 
-function escapeHtml(s: string): string {
+/** Exported so src/callerDashboard.ts (internal admin dashboard) reuses the same escaping instead of a second copy. */
+export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
@@ -155,6 +215,24 @@ function recommendationLabel(rec: Recommendation): string {
   return "Insufficient signal";
 }
 
+/** Own advertised price(s) — a range if the wallet backs multiple resources at different prices — plus a fairness pill against category peers, when computable. Both were already collected every refresh cycle and simply never surfaced before 2026-08-13. */
+function renderPriceCell(pricesAtomic: number[], fairness: PriceFairness): string {
+  if (pricesAtomic.length === 0) return '<span class="pill pill-muted">—</span>';
+  const usd = pricesAtomic.map((p) => p / 1_000_000);
+  const min = Math.min(...usd);
+  const max = Math.max(...usd);
+  const fmt = (n: number) => `$${n < 0.01 ? n.toFixed(4) : n.toFixed(2)}`;
+  const priceLabel = min === max ? fmt(min) : `${fmt(min)}–${fmt(max)}`;
+  const fairnessPill = fairness === "unknown" ? "" : ` <span class="pill pill-fairness-${fairness}">${escapeHtml(fairness)}</span>`;
+  return `${escapeHtml(priceLabel)}${fairnessPill}`;
+}
+
+/** Small inline label appended to the payer count — surfaces payer_concentration without a whole extra column. */
+function payerConcentrationLabel(concentration: PayerConcentration): string {
+  if (concentration === "UNKNOWN") return "";
+  return ` <span class="pill-muted small">${escapeHtml(concentration.toLowerCase())} conc.</span>`;
+}
+
 export function renderDashboardHtml(data: DashboardData): string {
   const { rows, counts, countsByChain, lastRefreshedAt } = data;
   const total = counts.proceed + counts.caution + counts.insufficientSignal;
@@ -176,11 +254,15 @@ export function renderDashboardHtml(data: DashboardData): string {
       return `<tr data-recommendation="${recSlug}" data-category="${category}" data-chain="${chain}" data-address="${escapeHtml(r.wallet_address)}">
         <td><code class="addr" title="${escapeHtml(r.wallet_address)}">${truncateAddress(r.wallet_address)}</code></td>
         <td><span class="pill pill-chain">${chain}</span></td>
-        <td><span class="badge badge-${recSlug}" title="trust_tier: ${escapeHtml(r.tier.toUpperCase())}">${recommendationLabel(r.recommendation)}</span></td>
+        <td>
+          <span class="badge badge-${recSlug}" title="trust_tier: ${escapeHtml(r.tier.toUpperCase())}">${recommendationLabel(r.recommendation)}</span>
+          <span class="pill-muted small">${escapeHtml(r.confidence.toLowerCase())} confidence</span>
+        </td>
         <td>${renderPlatformsCell(r.platforms_json)}</td>
         <td><span class="pill">${escapeHtml(category.replace(/_/g, " "))}</span></td>
+        <td>${renderPriceCell(r.ownPricesAtomic, r.priceFairness)}</td>
         <td class="num">${r.total_tx_count.toLocaleString()}</td>
-        <td class="num">${r.unique_payer_count.toLocaleString()}</td>
+        <td class="num">${r.unique_payer_count.toLocaleString()}${payerConcentrationLabel(r.payerConcentration)}</td>
         <td class="reasons">${reasons.map((x) => `<span class="reason">${escapeHtml(x)}</span>`).join("")}</td>
       </tr>`;
     })
@@ -256,6 +338,10 @@ export function renderDashboardHtml(data: DashboardData): string {
   }
   .pill-chain { text-transform: uppercase; letter-spacing: .02em; font-weight: 600; }
   .pill-muted { text-transform: none; }
+  .pill-muted.small, span.small { font-size: .72rem; color: var(--text-dim); background: none; border: none; padding: 0; display: inline-block; }
+  .pill-fairness-fair { color: var(--proceed); border-color: var(--proceed); }
+  .pill-fairness-high { color: var(--caution); border-color: var(--caution); }
+  .pill-fairness-low { color: var(--accent); border-color: var(--accent); }
   td a { color: var(--accent); text-decoration: none; }
   td a:hover { text-decoration: underline; }
   select#category-filter, select#chain-filter {
@@ -342,7 +428,7 @@ export function renderDashboardHtml(data: DashboardData): string {
 
   <div class="overflow">
     <table id="tbl">
-      <thead><tr><th>Wallet</th><th>Chain</th><th>Recommendation</th><th>Platform</th><th>Category</th><th class="num">Calls (30d)</th><th class="num">Unique payers</th><th>Reasons</th></tr></thead>
+      <thead><tr><th>Wallet</th><th>Chain</th><th>Recommendation</th><th>Platform</th><th>Category</th><th>Price</th><th class="num">Calls (30d)</th><th class="num">Unique payers</th><th>Reasons</th></tr></thead>
       <tbody>${rowsHtml || ""}</tbody>
     </table>
     <p class="empty" id="empty" style="display:none">No wallets match.</p>

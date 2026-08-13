@@ -28,6 +28,25 @@ const NEW_WALLET_DAYS = 14;
 // changed — this is confirmation from real data, not a guess anymore.
 /** Exported so src/tool.ts can derive `signals.payer_concentration` from the same number rather than a second hardcoded copy. */
 export const LOW_PAYER_DIVERSITY_RATIO = 0.3; // unique_payers / total_tx below this looks like wash volume
+// Added 2026-08-13 after a real, data-confirmed false-positive pattern: a
+// pure ratio breaks down for high-frequency-use APIs (search/lookup
+// resources an agent naturally calls many times per session — e.g. a
+// Twitter search API with 84,158 calls from 51 distinct real payers, ratio
+// 0.0006, well under LOW_PAYER_DIVERSITY_RATIO despite 51 real wallets
+// having paid it). Checked the *live* production distribution before
+// picking this, not guessed: PROCEED-recommendation Base merchants
+// currently top out at 134 unique payers, while 46 CAUTION merchants
+// (32 of them >=50) have MORE unique payers than that ceiling and were
+// still flagged purely on ratio — including some with 400-759 unique
+// payers, which is backwards for a "payer diversity" signal. 50 sits
+// comfortably under PROCEED's natural top end (57, 68, 72, 134) while
+// still being a real, hard-to-fake cost floor: reaching 50 distinct
+// wallets that each made a real x402 payment isn't cheap to fabricate.
+// Same epistemic status as LOW_PAYER_DIVERSITY_RATIO itself — grounded in
+// a real observed distribution, not a proven-optimal number; revisit if
+// the live distribution shifts meaningfully.
+/** Exported so src/tool.ts's payer_concentration derivation applies the same override — otherwise signals.payer_concentration could say HIGH while risk_flags no longer contains low_payer_diversity, an internally contradictory response. */
+export const MIN_PAYERS_FOR_BREADTH_OVERRIDE = 50;
 const HIGH_ABANDON_RATE = 0.35;
 
 /**
@@ -88,7 +107,12 @@ export function scoreMerchant(row: Omit<MerchantSignalRow, "tier" | "reasons_jso
   // Signal 2: payer diversity
   const diversityRatio =
     row.total_tx_count > 0 ? row.unique_payer_count / row.total_tx_count : 0;
-  if (diversityRatio < LOW_PAYER_DIVERSITY_RATIO) {
+  // MIN_PAYERS_FOR_BREADTH_OVERRIDE guards against exactly the failure mode
+  // a high-frequency-use API produces: hundreds of real, distinct payers
+  // each calling many times per session drives the ratio down without any
+  // actual concentration risk — see that constant's own comment for the
+  // real data behind this.
+  if (diversityRatio < LOW_PAYER_DIVERSITY_RATIO && row.unique_payer_count < MIN_PAYERS_FOR_BREADTH_OVERRIDE) {
     reasons.push("Low payer diversity — volume concentrated among few payers");
     riskFlags.push("low_payer_diversity");
   }
@@ -141,21 +165,45 @@ export function scoreMerchant(row: Omit<MerchantSignalRow, "tier" | "reasons_jso
   return { tier, reasons: reasons.slice(0, 3), riskFlags: riskFlags.slice(0, 3) };
 }
 
+/** Exported so callers (src/tool.ts, src/dashboard.ts) that need a representative single price from a wallet's own multiple price_observations rows use the same math scorePriceFairness does internally, rather than a third copy. */
+export function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+// Added 2026-08-13, replacing an unvalidated ±25% band that was producing
+// mostly noise against real data: checked live category price distributions
+// (six categories, 392 priced merchants) and found real interquartile
+// spread of roughly 2-5x the median in *each* direction within a single
+// category (e.g. data_api's own real p75/median ≈2.75x, median/p25 ≈2.5x) —
+// categories like "data_api" or "financial_data" bundle genuinely different
+// kinds of resource at genuinely different price points, not one narrow
+// market. Under the old ±25% band only 19% of real merchants landed on
+// "fair"; these thresholds — grounded in the actual observed IQR, not
+// guessed — produce 52% fair with high/low roughly balanced (99/91),
+// which is what "most real prices are unremarkable, a real minority are
+// outliers" should look like. Same epistemic status as
+// LOW_PAYER_DIVERSITY_RATIO/MIN_PAYERS_FOR_BREADTH_OVERRIDE: real-data-
+// grounded, not proven-optimal — the underlying category-coarseness this
+// works around (very different resources sharing one of six category
+// labels) is a real, separate limitation, not fixed by this alone. See
+// README "Price fairness caveats".
+const HIGH_PRICE_RATIO = 3.0; // 3x+ the category median
+const LOW_PRICE_RATIO = 0.35; // 0.35x or less of the category median
+
 export function scorePriceFairness(
   requestedPriceAtomic: number,
   comparablePricesAtomic: number[],
 ): PriceFairness {
   if (comparablePricesAtomic.length < 3) return "unknown";
 
-  const sorted = [...comparablePricesAtomic].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  const median =
-    sorted.length % 2 !== 0 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+  const medianPrice = median(comparablePricesAtomic)!;
+  if (medianPrice === 0) return "unknown";
+  const ratio = requestedPriceAtomic / medianPrice;
 
-  if (median === 0) return "unknown";
-  const ratio = requestedPriceAtomic / median;
-
-  if (ratio >= 1.25) return "high";
-  if (ratio <= 0.75) return "low";
+  if (ratio >= HIGH_PRICE_RATIO) return "high";
+  if (ratio <= LOW_PRICE_RATIO) return "low";
   return "fair";
 }

@@ -179,5 +179,15 @@ CREATE TABLE IF NOT EXISTS query_log (
   -- Added 2026-08-12. Wall-clock ms from request start to settlement,
   -- captured in src/index.ts. NULL for pre-existing rows.
   latency_ms              INTEGER,
+  -- Added 2026-08-13, for the internal caller-tracking dashboard (see
+  -- src/callerDashboard.ts). queried_category is the *checked merchant's*
+  -- category from the response (not caller-supplied — there's no category
+  -- input field), included so "what kinds of merchants are being checked"
+  -- is queryable without joining back to merchant_signals, which can drift
+  -- (a merchant's category can be recategorized after the query happened).
+  -- caller_supplied_price_atomic is genuinely caller-supplied: input.price
+  -- converted to atomic units, NULL if the caller didn't pass one.
+  queried_category          TEXT,
+  caller_supplied_price_atomic INTEGER,
   queried_at              INTEGER NOT NULL
 );

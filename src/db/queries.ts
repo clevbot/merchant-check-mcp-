@@ -72,28 +72,67 @@ export async function getComparablePrices(
   return results.map((r) => r.price_atomic);
 }
 
-export async function logQuery(
-  env: Env,
-  queriedWallet: string,
-  payerAddress: string | null,
-  txHash: string | null,
-  tierReturned: string,
+/**
+ * A merchant's own currently-advertised price(s) — one per resource it
+ * backs, atomic USDC units. Added 2026-08-13: this data has always been
+ * collected every refresh cycle (see upsertCategoryPriceObservations) but
+ * check_merchant never read it back — price_fairness only ever compared a
+ * *caller-supplied* price, so an agent that didn't already have a quote in
+ * hand got no pricing context at all. Distinct from getComparablePrices,
+ * which excludes this wallet to build a peer set; this is the wallet's own
+ * rows specifically.
+ */
+export async function getOwnPrices(env: Env, walletAddress: string): Promise<number[]> {
+  const detected = detectAndNormalize(walletAddress);
+  const normalized = detected ? detected.normalized : walletAddress;
+  const { results } = await env.DB.prepare(
+    `SELECT price_atomic FROM price_observations WHERE wallet_address = ? AND payer_address IS NULL`,
+  )
+    .bind(normalized)
+    .all<{ price_atomic: number }>();
+  return results.map((r) => r.price_atomic);
+}
+
+export interface LogQueryParams {
+  queriedWallet: string;
+  payerAddress: string | null;
+  txHash: string | null;
+  tierReturned: string;
   /** 'PROCEED' | 'CAUTION' | 'INSUFFICIENT_SIGNAL' — the real recommendation, captured via closure in src/index.ts createServer (see db/schema.sql query_log.recommendation comment for why this wasn't possible before 2026-08-12). */
-  recommendation: string | null,
+  recommendation: string | null;
   /** Wall-clock ms from request start to settlement. */
-  latencyMs: number | null,
-): Promise<void> {
+  latencyMs: number | null;
+  /** The checked merchant's own category from the response — see db/schema.sql query_log.queried_category comment for why this isn't caller-supplied. */
+  queriedCategory: string | null;
+  /** Genuinely caller-supplied: input.price converted to atomic units, NULL if the caller didn't pass one. Added for the internal caller-tracking dashboard (src/callerDashboard.ts) — see requirement in that feature's brief. */
+  callerSuppliedPriceAtomic: number | null;
+}
+
+/** Params object rather than positional args — this grew past the point positional args stay readable (added two more fields 2026-08-13 for the internal caller-tracking dashboard). */
+export async function logQuery(env: Env, params: LogQueryParams): Promise<void> {
   // queriedWallet can now be a Solana merchant address — must not be
   // unconditionally lowercased (see src/chains.ts). payerAddress is left
   // as-is: it's the address that paid *our* x402 endpoint, which only
   // accepts Base payments today, so it's always EVM and case-insensitive.
-  const detected = detectAndNormalize(queriedWallet);
-  const normalizedQueried = detected ? detected.normalized : queriedWallet;
+  const detected = detectAndNormalize(params.queriedWallet);
+  const normalizedQueried = detected ? detected.normalized : params.queriedWallet;
   await env.DB.prepare(
-    `INSERT INTO query_log (queried_wallet_address, payer_address, tx_hash, tier_returned, recommendation, latency_ms, queried_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO query_log (
+      queried_wallet_address, payer_address, tx_hash, tier_returned, recommendation, latency_ms,
+      queried_category, caller_supplied_price_atomic, queried_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
-    .bind(normalizedQueried, payerAddress, txHash, tierReturned, recommendation, latencyMs, Math.floor(Date.now() / 1000))
+    .bind(
+      normalizedQueried,
+      params.payerAddress,
+      params.txHash,
+      params.tierReturned,
+      params.recommendation,
+      params.latencyMs,
+      params.queriedCategory,
+      params.callerSuppliedPriceAtomic,
+      Math.floor(Date.now() / 1000),
+    )
     .run();
 }
 

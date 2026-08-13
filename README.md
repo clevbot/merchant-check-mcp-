@@ -215,6 +215,36 @@ curl -X POST https://mcp.gradientdecisions.com/refresh \
 Useful permanently too, even after the cron works, for an on-demand refresh
 outside the 4-hour cadence.
 
+## Internal caller-tracking dashboard
+
+Added 2026-08-13, separate from the public merchant-scoring dashboard.
+`GET /admin/callers` (same `X-Admin-Token` gate as `/refresh`/`/metrics`;
+append `?format=json` for raw JSON, `?window=<seconds>` to change the
+headline-stats window, default 7 days) tracks usage of `check_merchant`
+itself — who's calling it, how often, what they're checking — as opposed
+to which merchants score well. Not linked from the public site.
+
+Purpose (verbatim from the request that added this): *"this caller data is
+confirmed-intent ground truth (a wallet paying to check a merchant is
+actively evaluating a real purchase), intended to eventually inform
+buyer-side behavioral segmentation, not just merchant scoring."* That
+segmentation is **not built here** — this only ships the tracking/
+aggregation infrastructure (unique callers over time, query frequency per
+wallet to distinguish one-off scripts from repeat/active agents, category
+distribution of what's being checked, 30-day retention). Segmentation logic
+is explicit future work.
+
+**No-identity-resolution principle, same as everywhere else in this
+project**: every view here is keyed on `payer_address` (the on-chain wallet
+that paid) — nothing resolves that to an off-chain identity. See
+`src/callerDashboard.ts` for the full design comment.
+
+Implementation note: this mostly *extends* `query_log` (already existed for
+`/metrics`) rather than a new table — added `queried_category` (the checked
+merchant's category from the response) and `caller_supplied_price_atomic`
+(genuinely caller-supplied, from `input.price`) as two new columns, not a
+parallel logging path.
+
 ## Phase 0 resolution (stack compatibility)
 
 Confirmed via Cloudflare's own docs and by actually installing/typechecking
@@ -417,6 +447,36 @@ that itself charges for data isn't inherently wrong to pay a nominal fee
 for better upstream data — the open question is what marginal value it buys
 over what's already free, not whether spending is acceptable in principle).
 
+## Price fairness caveats
+
+Referenced from `src/scoring.ts`'s `scorePriceFairness` comment. Two real
+findings from 2026-08-13, both checked against live production data before
+acting on them, not assumed:
+
+- **The original ±25%-of-median "fair" band was wrong, confirmed against
+  real data.** Checked the live price distribution across all six
+  categories (392 priced merchants): only 19% landed on "fair," with
+  "high"/"low" each roughly 2x more common — not because most merchants are
+  actually mispriced, but because real category price spreads are far wider
+  than ±25%. `data_api` alone spans $0.001 to $5.12 (a >5000x range); every
+  category's real interquartile range (p25–p75) covers roughly 2–5x the
+  median in *each* direction. Recalibrated `HIGH_PRICE_RATIO`/
+  `LOW_PRICE_RATIO` to 3.0x/0.35x, chosen from that observed IQR rather than
+  guessed — produces 52% fair with high/low roughly balanced (99/91) against
+  the same live data. Same epistemic status as the payer-diversity fixes
+  above: real-data-grounded, not proven-optimal.
+- **This does not fully fix the underlying cause — category is a coarse
+  bucket.** The six categories (`data_api`, `compute`,
+  `content_generation`, `financial_data`, `storage`, `other`) each bundle
+  genuinely different kinds of resource at genuinely different natural
+  price points (e.g. a simple lookup API and a complex real-time analysis
+  API can both be `data_api`). Widening the ratio band reduces false
+  high/low flags but doesn't make "compared to every other `data_api`
+  merchant regardless of what it actually does" a precise comparison —
+  `price_fairness`/`pricing.fairness_vs_category` should be read as a rough
+  signal, not a precise valuation, until (if ever) a finer-grained resource
+  taxonomy exists to compare within.
+
 ## Solana signal caveats
 
 Referenced from `db/schema.sql`'s `velocity_anomaly_flag` comment and
@@ -515,6 +575,18 @@ Still genuinely needed:
 2. **A real `avoid` example** for the backtest — needs either a genuine
    x402-specific bad-actor source (none found publicly — the tech's too new)
    or enough real usage data over time to observe one organically.
+3. **Robinhood Chain calibration data source** — explicitly deferred
+   2026-08-13, not forgotten. Chain ID 4663 (Arbitrum Orbit L2, live since
+   2026-07-01) and its Virtuals Protocol / Agentic Accounts ecosystem are
+   real and confirmed, but two things are still missing before building
+   this: (a) real, verified contract addresses for identifying agent
+   wallets — public search only turned up what look like unofficial
+   imitation tokens riding the "Agentic" branding, not genuine Robinhood/
+   Virtuals infrastructure; (b) the stated purpose (calibrate harness-break
+   detection against "the same logic currently running on Base") has no
+   real baseline yet — signal 6 is a permanent stub (`detectVelocityAnomalyStub`,
+   always 0) on Base today. Either a real contact with verified addresses,
+   or building signal 6 for real first, unblocks this.
 
 ## Going to mainnet (done)
 

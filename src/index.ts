@@ -13,6 +13,7 @@ import type { CheckMerchantOutput, Env } from "./types";
 import { runRefresh } from "./refresh";
 import { runCategorization } from "./categorize";
 import { getDashboardData, renderDashboardHtml, dashboardDataToJson } from "./dashboard";
+import { getCallerAnalytics, renderCallerDashboardHtml, callerAnalyticsToJson } from "./callerDashboard";
 
 /**
  * Payment stack: @x402/core + @x402/evm + @x402/mcp — the official Coinbase/
@@ -151,10 +152,12 @@ function createServer(env: Env, accepts: PaymentRequirements[], resourceServer: 
         "of their observable on-chain payment behavior, on Base or Solana. Returns a " +
         "`recommendation` (PROCEED / CAUTION / INSUFFICIENT_SIGNAL) a payment policy can branch " +
         "on directly, plus supporting evidence: trust tier, confidence, payer diversity, " +
-        "transaction history, category, and known platform URL(s). This is decision support " +
-        "drawn from observed behavior, not a certification — PROCEED means the available " +
-        "evidence doesn't show cause for concern, not a guarantee of safety. Add the quoted " +
-        "price to also check it against comparable sellers.",
+        "transaction history, category, known platform URL(s), and the merchant's own " +
+        "advertised price(s) compared against category peers — no caller-supplied price " +
+        "required for that. This is decision support drawn from observed behavior, not a " +
+        "certification — PROCEED means the available evidence doesn't show cause for concern, " +
+        "not a guarantee of safety. Add a specific quoted price to also check that exact " +
+        "figure against comparable sellers.",
       inputSchema: {
         type: "object",
         properties: {
@@ -203,6 +206,7 @@ function createServer(env: Env, accepts: PaymentRequirements[], resourceServer: 
           risk_flags: [],
           reasons: ["Consistent signals across wallet age, payer diversity, and settlement history"],
           price_fairness: "fair",
+          pricing: { advertised_prices_atomic: [50000], fairness_vs_category: "fair" },
           category: "data_api",
           chain: "base",
           platforms: [{ url: "https://api.example.com/v1/weather", serviceName: "Weather API" }],
@@ -220,6 +224,7 @@ function createServer(env: Env, accepts: PaymentRequirements[], resourceServer: 
             risk_flags: { type: "array" },
             reasons: { type: "array" },
             price_fairness: { type: "string" },
+            pricing: { type: "object" },
             category: { type: ["string", "null"] },
             chain: { type: ["string", "null"] },
             platforms: { type: "array" },
@@ -236,17 +241,24 @@ function createServer(env: Env, accepts: PaymentRequirements[], resourceServer: 
       // 2026-08-12 — see that comment for why this previously logged a
       // "settled" placeholder instead).
       onAfterSettlement: async ({ arguments: args, settlement }) => {
-        const wallet = (args as { merchant_wallet_address?: string }).merchant_wallet_address;
+        const typedArgs = args as { merchant_wallet_address?: string; price?: number };
+        const wallet = typedArgs.merchant_wallet_address;
         const latencyMs = latencyStartedAt !== null ? Date.now() - latencyStartedAt : null;
-        await logQuery(
-          env,
-          wallet ?? "unknown",
-          settlement.payer ?? null,
-          settlement.transaction ?? null,
-          lastResult?.trust_tier ?? "settled", // fallback preserves the old placeholder if lastResult somehow wasn't captured, rather than writing NULL and losing the row's meaning entirely
-          lastResult?.recommendation ?? null,
+        // price is USD-equivalent from the caller, same conversion src/tool.ts
+        // uses for price_fairness — stored atomic so it's comparable to
+        // price_observations without a unit mismatch.
+        const callerSuppliedPriceAtomic =
+          typedArgs.price !== undefined ? Math.round(typedArgs.price * 1_000_000) : null;
+        await logQuery(env, {
+          queriedWallet: wallet ?? "unknown",
+          payerAddress: settlement.payer ?? null,
+          txHash: settlement.transaction ?? null,
+          tierReturned: lastResult?.trust_tier ?? "settled", // fallback preserves the old placeholder if lastResult somehow wasn't captured, rather than writing NULL and losing the row's meaning entirely
+          recommendation: lastResult?.recommendation ?? null,
           latencyMs,
-        );
+          queriedCategory: lastResult?.category ?? null,
+          callerSuppliedPriceAtomic,
+        });
       },
     },
   });
@@ -264,12 +276,14 @@ function createServer(env: Env, accepts: PaymentRequirements[], resourceServer: 
       "their observable on-chain payment behavior, on Base or Solana. Returns a `recommendation` " +
       "(PROCEED / CAUTION / INSUFFICIENT_SIGNAL) a payment policy can branch on directly, plus " +
       "supporting evidence: trust tier, confidence, payer diversity, transaction history, " +
-      "category (data_api/compute/content_generation/financial_data/storage/other), and known " +
-      "platform URL(s). This is decision support drawn from observed behavior, not a " +
-      "certification — PROCEED means the available evidence doesn't show cause for concern, not " +
-      "a guarantee of safety; INSUFFICIENT_SIGNAL means there isn't enough history to say either " +
-      "way, distinct from an actual concern. Add the quoted price to also check it against " +
-      "comparable sellers. $0.01 USDC per check, paid via x402.",
+      "category (data_api/compute/content_generation/financial_data/storage/other), known " +
+      "platform URL(s), and the merchant's own advertised price(s) compared against category " +
+      "peers — no caller-supplied price required for that. This is decision support drawn from " +
+      "observed behavior, not a certification — PROCEED means the available evidence doesn't " +
+      "show cause for concern, not a guarantee of safety; INSUFFICIENT_SIGNAL means there isn't " +
+      "enough history to say either way, distinct from an actual concern. Add a specific quoted " +
+      "price to also check that exact figure against comparable sellers. $0.01 USDC per check, " +
+      "paid via x402.",
     {
       merchant_wallet_address: z
         .string()
@@ -393,6 +407,31 @@ export default {
       return new Response(JSON.stringify(summary, null, 2), {
         status: 200,
         headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Internal caller-tracking dashboard (2026-08-13) — separate from the
+    // public merchant-scoring dashboard below on purpose: this tracks who's
+    // *calling* check_merchant (confirmed-intent buyer-side data), not
+    // which merchants score well. Admin-gated, not linked from the public
+    // site, no off-chain identity resolution — see src/callerDashboard.ts
+    // module comment for the full design constraints. ?window= in seconds,
+    // defaults to 7 days for the headline stats; the 30-day retention view
+    // and all-time frequency table are always full-range regardless of
+    // ?window (see getCallerAnalytics).
+    if (url.pathname === "/admin/callers" && request.method === "GET") {
+      if (request.headers.get("X-Admin-Token") !== env.ADMIN_TOKEN || !env.ADMIN_TOKEN) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      const windowParam = url.searchParams.get("window");
+      const windowSeconds = windowParam ? Number(windowParam) : 7 * 24 * 60 * 60;
+      const analytics = await getCallerAnalytics(env, windowSeconds);
+      if (url.searchParams.get("format") === "json") {
+        return callerAnalyticsToJson(analytics);
+      }
+      return new Response(renderCallerDashboardHtml(analytics), {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
       });
     }
 

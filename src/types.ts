@@ -103,6 +103,21 @@ export interface MerchantSignals {
   payer_concentration: PayerConcentration;
 }
 
+/**
+ * Added 2026-08-13 — real gap found by direct comparison against the
+ * dashboard, which had this data (price_observations has always collected
+ * it every refresh cycle) while check_merchant didn't expose it at all
+ * unless the caller already supplied a `price` to check. This is the
+ * unconditional counterpart: what the merchant itself currently charges,
+ * and how that compares to category peers, with no caller input required.
+ */
+export interface MerchantPricing {
+  /** Atomic USDC units (6 decimals, same on Base and Solana). One entry per resource this wallet backs at a distinct price — empty array if none ingested yet, same NULL-until-ingested status as `category`/`platforms`. */
+  advertised_prices_atomic: number[];
+  /** This merchant's own (median) advertised price vs. category peers — computed the same way as `price_fairness`, but using the merchant's own price, not a caller-supplied one. "unknown" if uncategorized, no prices ingested yet, or fewer than 3 category peers to compare against. */
+  fairness_vs_category: PriceFairness;
+}
+
 export interface CheckMerchantOutput {
   merchant: string;
   /** CAIP-2 network id, e.g. "eip155:8453" — null only alongside chain:null (invalid-address path). */
@@ -122,7 +137,9 @@ export interface CheckMerchantOutput {
   risk_flags: string[];
   /** Human-readable versions of the same underlying signals as risk_flags — kept for the dashboard and for agents that want prose in a log/explanation, not for policy branching (use recommendation or risk_flags for that). */
   reasons: string[];
+  /** Fairness of a *caller-supplied* `price` (input.price) against category peers — "unknown" if no price was supplied. For the merchant's own advertised pricing regardless of caller input, see `pricing` below. */
   price_fairness: PriceFairness;
+  pricing: MerchantPricing;
   /** null until src/categorize has classified this wallet at least once. */
   category: MerchantCategory | null;
   /** null only for the invalid-address / not-found early-return paths in src/tool.ts. */

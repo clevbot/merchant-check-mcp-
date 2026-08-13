@@ -1,5 +1,5 @@
-import { LOW_PAYER_DIVERSITY_RATIO, MIN_TX_FOR_CONFIDENCE, scoreMerchant, scorePriceFairness } from "./scoring";
-import { getComparablePrices, getMerchantSignals } from "./db/queries";
+import { LOW_PAYER_DIVERSITY_RATIO, MIN_PAYERS_FOR_BREADTH_OVERRIDE, MIN_TX_FOR_CONFIDENCE, median, scoreMerchant, scorePriceFairness } from "./scoring";
+import { getComparablePrices, getMerchantSignals, getOwnPrices } from "./db/queries";
 import { isMerchantCategory } from "./categorize/types";
 import { detectAndNormalize } from "./chains";
 import type {
@@ -9,6 +9,7 @@ import type {
   DataSufficiency,
   Env,
   MerchantPlatform,
+  MerchantPricing,
   MerchantSignals,
   PayerConcentration,
   Recommendation,
@@ -73,9 +74,17 @@ export function deriveConfidence(totalTxCount: number): Confidence {
  * risk flag in src/scoring.ts. The upper (LOW-concentration) cutoff is a
  * reasonable-but-not-separately-validated 2x that line — same caveat as
  * deriveConfidence above.
+ *
+ * Also applies MIN_PAYERS_FOR_BREADTH_OVERRIDE, same as scoreMerchant's own
+ * signal 2 (added 2026-08-13, real production data found the ratio alone
+ * mis-flags high-frequency-use APIs with hundreds of real distinct payers —
+ * see that constant's comment) — without this, a merchant that no longer
+ * triggers the low_payer_diversity risk flag could still show
+ * payer_concentration: "HIGH" here, an internally contradictory response.
  */
 export function derivePayerConcentration(uniquePayers: number, totalTxCount: number): PayerConcentration {
   if (totalTxCount === 0) return "UNKNOWN";
+  if (uniquePayers >= MIN_PAYERS_FOR_BREADTH_OVERRIDE) return "LOW";
   const ratio = uniquePayers / totalTxCount;
   if (ratio < LOW_PAYER_DIVERSITY_RATIO) return "HIGH";
   if (ratio < LOW_PAYER_DIVERSITY_RATIO * 2) return "MEDIUM";
@@ -115,6 +124,7 @@ export async function checkMerchant(
       risk_flags: [],
       reasons: ["merchant_wallet_address is not a recognized Base or Solana address — cannot score"],
       price_fairness: "unknown",
+      pricing: { advertised_prices_atomic: [], fairness_vs_category: "unknown" },
       category: null,
       chain: null,
       platforms: [],
@@ -136,6 +146,7 @@ export async function checkMerchant(
       risk_flags: [],
       reasons: ["No transaction history found for this wallet on indexed rails"],
       price_fairness: "unknown",
+      pricing: { advertised_prices_atomic: [], fairness_vs_category: "unknown" },
       category: null,
       chain,
       platforms: [],
@@ -145,22 +156,42 @@ export async function checkMerchant(
   const { tier, reasons, riskFlags } = scoreMerchant(row);
   const category = row.category && isMerchantCategory(row.category) ? row.category : null;
 
-  // Price-fairness compares against the merchant's own `category`, not the
-  // caller-supplied resource_type (kept in the input schema for backward
-  // compatibility, but no longer required or used here) — category is the
-  // only bucket real Bazaar-sourced price data actually exists for. See
-  // src/refresh/index.ts upsertCategoryPriceObservations.
+  // Category peers are fetched at most once and shared by both price
+  // comparisons below (price_fairness for a caller-supplied price, pricing
+  // for the merchant's own advertised price) — avoids two identical D1
+  // queries in the case where both apply, which matters given the brief's
+  // own "unnecessary repeated queries" economics ask (section 10).
+  const ownPricesAtomic = await getOwnPrices(env, normalized);
+  const ownMedian = median(ownPricesAtomic);
+  const needsCategoryPeers = category !== null && (input.price !== undefined || ownMedian !== null);
+  const categoryPeers = needsCategoryPeers ? await getComparablePrices(env, category!, normalized) : [];
+
+  // Price-fairness compares a *caller-supplied* price against the merchant's
+  // own `category`, not the caller-supplied resource_type (kept in the input
+  // schema for backward compatibility, but no longer required or used here)
+  // — category is the only bucket real Bazaar-sourced price data actually
+  // exists for. See src/refresh/index.ts upsertCategoryPriceObservations.
   let priceFairness: CheckMerchantOutput["price_fairness"] = "unknown";
   if (input.price !== undefined && category) {
-    const comparable = await getComparablePrices(env, category, normalized);
     // price is USD-equivalent float from the caller; store/compare in atomic
     // USDC units (6 decimals) to match price_observations. Both Base USDC and
     // Solana USDC use 6 decimals, so this atomic comparison is valid across
     // chains within the same category — see getComparablePrices in
     // src/db/queries.ts.
     const requestedAtomic = Math.round(input.price * 1_000_000);
-    priceFairness = scorePriceFairness(requestedAtomic, comparable);
+    priceFairness = scorePriceFairness(requestedAtomic, categoryPeers);
   }
+
+  // Unconditional pricing context — added 2026-08-13 alongside price_fairness
+  // above, not a replacement for it: price_fairness answers "is the price a
+  // caller was quoted fair", pricing answers "what does this merchant
+  // generally charge and how does that compare", with no caller input
+  // needed. Reuses the exact same comparison math (median + scorePriceFairness)
+  // as price_fairness and the dashboard's own price column (src/dashboard.ts)
+  // rather than a fourth copy of this logic.
+  const fairnessVsCategory: CheckMerchantOutput["pricing"]["fairness_vs_category"] =
+    ownMedian !== null && category ? scorePriceFairness(ownMedian, categoryPeers) : "unknown";
+  const pricing: MerchantPricing = { advertised_prices_atomic: ownPricesAtomic, fairness_vs_category: fairnessVsCategory };
 
   const dataSufficiency: DataSufficiency = row.total_tx_count < MIN_TX_FOR_CONFIDENCE ? "INSUFFICIENT" : "SUFFICIENT";
   const signals: MerchantSignals = {
@@ -181,6 +212,7 @@ export async function checkMerchant(
     risk_flags: riskFlags,
     reasons,
     price_fairness: priceFairness,
+    pricing,
     category,
     chain,
     platforms: parsePlatforms(row.platforms_json),
