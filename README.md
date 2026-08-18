@@ -208,27 +208,32 @@ malformed response just looked like an inert error result, not something
 worth auto-paying for). Found by testing against the live deployment, not
 from any docs — worth knowing if you add more resource metadata elsewhere.
 
-## Remaining one-time account setup
+## Remaining one-time account setup (done)
 
-- **`workers.dev` subdomain**: the scheduled refresh-worker cron trigger
-  still fails to attach on deploy — `wrangler` reports the account needs a
-  `workers.dev` subdomain enabled first (one-time, one click: open the
-  Workers section of the Cloudflare dashboard once). Not currently blocking
-  anything else — see "Manual refresh trigger" below for the workaround —
-  but re-run `wrangler deploy` after enabling it to attach the cron and stop
-  needing that workaround.
+**Stale heading, kept for history.** The `workers.dev` subdomain blocker
+that failed on every single deploy this session (`wrangler` reporting the
+account needed a subdomain before the cron trigger could attach) is
+resolved as of 2026-08-18 — visiting the Workers section of the Cloudflare
+dashboard once provisioned it. Confirmed via a live `wrangler deploy`:
+```
+schedule: 0 */4 * * *
+schedule: 0 0 1 * *
+```
+Both cron triggers now attach cleanly. The refresh worker runs
+automatically every 4 hours; monthly forced re-categorization runs on the
+1st. Data had gone stale for 6+ days before this was caught and fixed —
+worth periodically checking `lastRefreshedAt` via `/api/wallets` even with
+the cron working, same as any scheduled job.
 
 ## Manual refresh trigger
 
-Until the cron above is attached, `POST /refresh` (shared-secret header
-`X-Admin-Token`, value in `.env.demo` as `ADMIN_TOKEN`) runs the refresh
-worker on demand:
+Not required anymore now that the cron is attached, but still useful for
+an on-demand refresh outside the 4-hour cadence (shared-secret header
+`X-Admin-Token`):
 ```bash
 curl -X POST https://mcp.gradientdecisions.com/refresh \
-  -H "X-Admin-Token: $(grep ADMIN_TOKEN .env.demo | cut -d= -f2)"
+  -H "X-Admin-Token: <your ADMIN_TOKEN>"
 ```
-Useful permanently too, even after the cron works, for an on-demand refresh
-outside the 4-hour cadence.
 
 ## Internal caller-tracking dashboard
 
@@ -578,16 +583,14 @@ Done:
   directories may cache descriptions and not immediately reflect README/tool
   changes made here — if something there looks stale, it's a caching lag on
   their end, not necessarily a stale source here, but check both.
+- ✅ `workers.dev` subdomain enabled 2026-08-18 — the cron trigger now
+  attaches on deploy (confirmed live, see "Remaining one-time account
+  setup" above). Data had silently gone stale for 6+ days before this was
+  caught; the automatic 4-hour refresh should prevent that recurring, but
+  it's still worth spot-checking `lastRefreshedAt`.
 
 Still genuinely needed:
-1. **`workers.dev` subdomain** — one dashboard click (Cloudflare dashboard →
-   Workers menu, opening it the first time auto-provisions one) to attach
-   the cron trigger. Every deploy this session has logged the same "You need
-   a workers.dev subdomain" error for the cron schedule specifically — MCP
-   traffic and the dashboard are unaffected, only the *automatic* 4-hour
-   refresh; `POST /refresh` remains the working manual trigger until this
-   is done.
-2. **A real `avoid` example** for the backtest — needs either a genuine
+1. **A real `avoid` example** for the backtest — needs either a genuine
    x402-specific bad-actor source (none found publicly — the tech's too new)
    or enough real usage data over time to observe one organically.
 3. **Robinhood Chain calibration data source** — explicitly deferred
