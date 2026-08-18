@@ -14,6 +14,7 @@ import { runRefresh } from "./refresh";
 import { runCategorization } from "./categorize";
 import { getDashboardData, renderDashboardHtml, dashboardDataToJson } from "./dashboard";
 import { getCallerAnalytics, renderCallerDashboardHtml, callerAnalyticsToJson } from "./callerDashboard";
+import { renderPrivacyPolicyHtml } from "./privacy";
 
 /**
  * Payment stack: @x402/core + @x402/evm + @x402/mcp — the official Coinbase/
@@ -447,6 +448,11 @@ export default {
     }
     if (url.pathname === "/api/wallets") {
       return dashboardDataToJson(await getDashboardData(env));
+    }
+    if (url.pathname === "/privacy") {
+      return new Response(renderPrivacyPolicyHtml(), {
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=3600" },
+      });
     }
 
     if (url.pathname !== "/mcp") {

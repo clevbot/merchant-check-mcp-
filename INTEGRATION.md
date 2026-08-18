@@ -11,7 +11,9 @@ merchants. It is **not**:
 
 It is a $0.01-per-check, machine-native, x402-native tool designed to be
 called at exactly one moment: right before an agent pays a merchant it
-hasn't dealt with before.
+hasn't dealt with before. See the
+[privacy policy](https://gradientdecisions.com/privacy) for how caller and
+merchant wallet data is handled.
 
 ## Where this sits in the flow
 

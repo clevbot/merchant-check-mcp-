@@ -440,7 +440,7 @@ export function renderDashboardHtml(data: DashboardData): string {
     discovery + Helius RPC (Solana mainnet). Refreshed periodically —
     last update ${lastRefreshedAt ? relativeTime(lastRefreshedAt) : "never"}.
     Part of <strong>Gradient Decisions</strong>. Raw data:
-    <a href="/api/wallets">/api/wallets</a>.
+    <a href="/api/wallets">/api/wallets</a>. <a href="/privacy">Privacy policy</a>.
   </footer>
 </div>
 <script>

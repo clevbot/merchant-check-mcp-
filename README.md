@@ -8,8 +8,23 @@ $0.01 per check, paid via x402. It is a pre-payment decision primitive, not
 a certification, a guarantee of safety, or a replacement for an agent's own
 payment policy. See [INTEGRATION.md](INTEGRATION.md) for the full
 discover → check → decide → pay flow, the 402-response-to-input mapping,
-and the exact response shape. This file tracks what's actually built,
-what's stubbed, and what needs you before this goes further.
+and the exact response shape. See the
+[privacy policy](https://gradientdecisions.com/privacy) for how data is
+handled. This file tracks what's actually built, what's stubbed, and what
+needs you before this goes further.
+
+## Privacy policy
+
+Live at `gradientdecisions.com/privacy` (`src/privacy.ts`), linked from the
+dashboard footer and here. Drafted 2026-08-13 by Claude at direct request,
+grounded in this system's actual data practices (what `query_log` and
+`merchant_signals` really store — see "Internal caller-tracking dashboard"
+above) rather than generic boilerplate. **Not reviewed by a lawyer** — the
+page itself says so, and that caveat should stay until it has been. Contact
+email is currently the developer's personal address
+(`colin.cleven@gmail.com`, the only real email available in this session);
+swap for a dedicated address in `src/privacy.ts`'s `CONTACT_EMAIL` constant
+when one exists.
 
 ```
 DISCOVER → IDENTIFY PAYMENT DESTINATION → GRADIENT MERCHANT CHECK → AGENT PAYMENT POLICY → X402 PAYMENT
