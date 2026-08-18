@@ -37,8 +37,8 @@ export function renderMonogram(idSuffix: string, sizePx = 40): string {
         <stop offset="100%" stop-color="currentColor" stop-opacity="0.18"/>
       </linearGradient>
     </defs>
-    <text x="40" y="165" font-family="Poppins, 'Century Gothic', Helvetica, Arial, sans-serif" font-size="130" font-weight="700" fill="url(#gdFadeLR-${idSuffix})">G</text>
-    <text x="185" y="165" font-family="Poppins, 'Century Gothic', Helvetica, Arial, sans-serif" font-size="130" font-weight="700" fill="url(#gdFadeRL-${idSuffix})">D</text>
+    <text x="60" y="165" font-family="Poppins, 'Century Gothic', Helvetica, Arial, sans-serif" font-size="130" font-weight="700" fill="url(#gdFadeLR-${idSuffix})">G</text>
+    <text x="165" y="165" font-family="Poppins, 'Century Gothic', Helvetica, Arial, sans-serif" font-size="130" font-weight="700" fill="url(#gdFadeRL-${idSuffix})">D</text>
   </svg>`;
 }
 

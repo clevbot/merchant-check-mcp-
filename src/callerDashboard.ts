@@ -176,7 +176,7 @@ export function renderCallerDashboardHtml(data: CallerAnalytics): string {
     .map((d) => `<tr><td>${escapeHtml(d.day)}</td><td class="num">${d.unique_callers.toLocaleString()}</td></tr>`)
     .join("\n");
 
-  return `<title>Internal — Caller Analytics</title>
+  return `<title>Internal | Caller Analytics</title>
 <meta name="robots" content="noindex, nofollow">
 ${FAVICON_LINK}
 <style>
@@ -204,12 +204,12 @@ ${FAVICON_LINK}
   ${BRAND_CSS}
 </style>
 <div class="topbar"></div>
-<div class="brand-row">${renderMonogram("caller-header", 22)}<span>Gradient Decisions — Internal</span></div>
+<div class="brand-row">${renderMonogram("caller-header", 22)}<span>Gradient Decisions, Internal</span></div>
 <h1>check_merchant caller analytics</h1>
 <p class="note">
   Internal only, not linked from the public site. Tracks wallet-level usage of check_merchant
-  itself — who's paying to check merchants, how often, what categories — as confirmed-intent
-  ground truth (a wallet paying to check a merchant is actively evaluating a real purchase).
+  itself: who's paying to check merchants, how often, what categories. Read as confirmed-intent
+  ground truth, since a wallet paying to check a merchant is actively evaluating a real purchase.
   No off-chain identity resolution: every row here is a wallet address, nothing more.
 </p>
 

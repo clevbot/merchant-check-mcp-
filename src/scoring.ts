@@ -113,7 +113,7 @@ export function scoreMerchant(row: Omit<MerchantSignalRow, "tier" | "reasons_jso
   // actual concentration risk — see that constant's own comment for the
   // real data behind this.
   if (diversityRatio < LOW_PAYER_DIVERSITY_RATIO && row.unique_payer_count < MIN_PAYERS_FOR_BREADTH_OVERRIDE) {
-    reasons.push("Low payer diversity — volume concentrated among few payers");
+    reasons.push("Low payer diversity: volume concentrated among few payers");
     riskFlags.push("low_payer_diversity");
   }
   if (row.payer_cluster_flag) {
@@ -133,7 +133,7 @@ export function scoreMerchant(row: Omit<MerchantSignalRow, "tier" | "reasons_jso
 
   // Signal 4: refunds / recourse — zero refunds at high volume is itself a flag
   if (row.refund_count === 0 && row.refund_eligible_volume > 0 && row.total_tx_count > 20) {
-    reasons.push("No visible recourse path — zero refunds despite meaningful volume");
+    reasons.push("No visible recourse path: zero refunds despite meaningful volume");
     riskFlags.push("no_refund_recourse");
   }
 

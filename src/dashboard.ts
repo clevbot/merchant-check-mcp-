@@ -273,7 +273,7 @@ export function renderDashboardHtml(data: DashboardData): string {
     .map((c) => `<option value="${c}">${c === "all" ? "All categories" : c.replace(/_/g, " ")}</option>`)
     .join("");
 
-  return `<title>x402 Merchant Check — Gradient Decisions</title>
+  return `<title>x402 Merchant Check | Gradient Decisions</title>
 <meta name="description" content="Pre-payment merchant intelligence for x402 agents: live recommendations for Base and Solana merchants, scored from observable on-chain payment behavior.">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 ${FAVICON_LINK}
@@ -309,10 +309,9 @@ ${FONT_LINKS}
   ${BRAND_CSS}
   .wrap { max-width: 1080px; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
   .topbar { position: relative; height: 3px; background: var(--brand-gradient); margin: -2.5rem -1.5rem 2rem; }
-  .brand-row { display: flex; align-items: center; gap: .65rem; margin-bottom: .6rem; }
-  .brand-row .brand-mark { width: 30px; }
-  .brand-row .brand-sub { font-size: .74rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: .06em; }
-  header h1 { font-size: 1.55rem; font-weight: 600; margin: 0 0 .25rem; letter-spacing: -.01em; }
+  .brand-row { display: flex; align-items: center; gap: .55rem; margin-bottom: .6rem; }
+  .brand-row .brand-mark { width: 34px; }
+  header h1 { font-size: 1.55rem; font-weight: 600; margin: 0; letter-spacing: -.01em; }
   header p.tagline { color: var(--text-dim); margin: 0 0 1.75rem; max-width: 60ch; }
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: .75rem; margin-bottom: 1.75rem; }
   .stat-card {
@@ -386,14 +385,13 @@ ${FONT_LINKS}
 <div class="wrap">
   <header>
     <div class="brand-row">
-      ${renderMonogram("dash-header", 30)}
-      <span class="brand-sub">Gradient Decisions</span>
+      ${renderMonogram("dash-header", 34)}
+      <h1>x402 Merchant Check</h1>
     </div>
-    <h1>x402 Merchant Check</h1>
     <p class="tagline">
       Context for agentic buying decisions: merchant trust tiers for autonomous agent
-      commerce, scored from real on-chain and x402 activity — not a certification, an
-      algorithmic read of public signals. Same data agents get via the
+      commerce, scored from real on-chain and x402 activity. This is not a certification,
+      just an algorithmic read of public signals. Same data agents get via the
       <code class="small">check_merchant</code> MCP tool at
       <code class="small">mcp.gradientdecisions.com</code> ($0.01/query via x402), free to
       browse here. Covers both Base and Solana x402 activity.
@@ -431,7 +429,7 @@ ${FONT_LINKS}
   <p class="chain-note">
     Shown separately from the combined figures above on purpose: Solana settles roughly 4x
     faster than Base, and the velocity/anomaly signal hasn't yet been validated as behaving
-    the same way across both — see the <code class="small">chain</code> filter below to
+    the same way across both. See the <code class="small">chain</code> filter below to
     inspect either network on its own.
   </p>
 
@@ -461,7 +459,7 @@ ${FONT_LINKS}
     <div class="footer-brand">${renderWordmark("dash-footer", 130)}</div>
     Data sources: <a href="https://docs.cdp.coinbase.com/x402/bazaar" target="_blank" rel="noopener">x402 Bazaar</a>
     (Base mainnet) and <a href="https://facilitator.payai.network" target="_blank" rel="noopener">PayAI Network</a>
-    discovery + Helius RPC (Solana mainnet). Refreshed periodically —
+    discovery + Helius RPC (Solana mainnet). Refreshed periodically,
     last update ${lastRefreshedAt ? relativeTime(lastRefreshedAt) : "never"}.
     Raw data: <a href="/api/wallets">/api/wallets</a>. <a href="/privacy">Privacy policy</a>.
   </footer>

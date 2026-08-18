@@ -182,7 +182,7 @@ export class PayAIDataSource implements ChainDataSource {
     const activity = this.cache.get(walletAddress);
     if (!activity) {
       throw new Error(
-        `No cached PayAI activity for ${walletAddress} — listActiveMerchants() must run ` +
+        `No cached PayAI activity for ${walletAddress}. listActiveMerchants() must run ` +
           `first on this same PayAIDataSource instance.`,
       );
     }

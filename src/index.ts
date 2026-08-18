@@ -79,7 +79,7 @@ function getResourceServer(env: Env): Promise<x402ResourceServer> {
 async function buildAccepts(env: Env, server: x402ResourceServer): Promise<PaymentRequirements[]> {
   if (!env.PAYOUT_ADDRESS) {
     throw new Error(
-      "PAYOUT_ADDRESS is not set — run `wrangler secret put PAYOUT_ADDRESS` with a Base " +
+      "PAYOUT_ADDRESS is not set. Run `wrangler secret put PAYOUT_ADDRESS` with a Base " +
         "wallet address you control before this endpoint can charge for queries. See README.",
     );
   }
@@ -113,7 +113,7 @@ function createServer(env: Env, accepts: PaymentRequirements[], resourceServer: 
     resource: {
       description:
         "Pre-payment assessment of a merchant's observable on-chain payment behavior, backed by " +
-        "real x402 settlement history on Base and Solana — decision support, not a certification.",
+        "real x402 settlement history on Base and Solana. Decision support, not a certification.",
       // serviceName is validated against @x402/core's ResourceInfoSchema:
       // printable-ASCII only (no em-dash) and <=32 chars. Learned this by
       // hitting a real ZodError from the deployed endpoint, not from docs.
@@ -148,15 +148,15 @@ function createServer(env: Env, accepts: PaymentRequirements[], resourceServer: 
     extensions: declareDiscoveryExtension({
       toolName: "check_merchant",
       description:
-        "Before paying an unfamiliar merchant via x402 — including one just discovered through " +
-        "a marketplace like Coinbase's x402 Bazaar — call this for a machine-readable assessment " +
+        "Before paying an unfamiliar merchant via x402, including one just discovered through " +
+        "a marketplace like Coinbase's x402 Bazaar, call this for a machine-readable assessment " +
         "of their observable on-chain payment behavior, on Base or Solana. Returns a " +
         "`recommendation` (PROCEED / CAUTION / INSUFFICIENT_SIGNAL) a payment policy can branch " +
         "on directly, plus supporting evidence: trust tier, confidence, payer diversity, " +
         "transaction history, category, known platform URL(s), and the merchant's own " +
-        "advertised price(s) compared against category peers — no caller-supplied price " +
+        "advertised price(s) compared against category peers, with no caller-supplied price " +
         "required for that. This is decision support drawn from observed behavior, not a " +
-        "certification — PROCEED means the available evidence doesn't show cause for concern, " +
+        "certification. PROCEED means the available evidence doesn't show cause for concern, " +
         "not a guarantee of safety. Add a specific quoted price to also check that exact " +
         "figure against comparable sellers.",
       inputSchema: {
@@ -164,7 +164,7 @@ function createServer(env: Env, accepts: PaymentRequirements[], resourceServer: 
         properties: {
           merchant_wallet_address: {
             type: "string",
-            description: "Merchant's receiving wallet address — a Base (0x…) or Solana (base58) address. Usually extractable directly from a 402 Payment Required response's accepts[].payTo.",
+            description: "Merchant's receiving wallet address: a Base (0x...) or Solana (base58) address. Usually extractable directly from a 402 Payment Required response's accepts[].payTo.",
           },
           price: {
             type: "number",
@@ -272,24 +272,24 @@ function createServer(env: Env, accepts: PaymentRequirements[], resourceServer: 
   // underlying tool call.
   mcp.tool(
     "check_merchant",
-    "Before paying an unfamiliar merchant via x402 — including one just discovered through a " +
-      "marketplace like Coinbase's x402 Bazaar — call this for a machine-readable assessment of " +
+    "Before paying an unfamiliar merchant via x402, including one just discovered through a " +
+      "marketplace like Coinbase's x402 Bazaar, call this for a machine-readable assessment of " +
       "their observable on-chain payment behavior, on Base or Solana. Returns a `recommendation` " +
       "(PROCEED / CAUTION / INSUFFICIENT_SIGNAL) a payment policy can branch on directly, plus " +
       "supporting evidence: trust tier, confidence, payer diversity, transaction history, " +
       "category (data_api/compute/content_generation/financial_data/storage/other), known " +
       "platform URL(s), and the merchant's own advertised price(s) compared against category " +
-      "peers — no caller-supplied price required for that. This is decision support drawn from " +
-      "observed behavior, not a certification — PROCEED means the available evidence doesn't " +
-      "show cause for concern, not a guarantee of safety; INSUFFICIENT_SIGNAL means there isn't " +
-      "enough history to say either way, distinct from an actual concern. Add a specific quoted " +
-      "price to also check that exact figure against comparable sellers. $0.01 USDC per check, " +
-      "paid via x402.",
+      "peers, with no caller-supplied price required for that. This is decision support drawn " +
+      "from observed behavior, not a certification. PROCEED means the available evidence " +
+      "doesn't show cause for concern, not a guarantee of safety. INSUFFICIENT_SIGNAL means " +
+      "there isn't enough history to say either way, distinct from an actual concern. Add a " +
+      "specific quoted price to also check that exact figure against comparable sellers. " +
+      "$0.01 USDC per check, paid via x402.",
     {
       merchant_wallet_address: z
         .string()
         .describe(
-          "Merchant's receiving wallet address — a Base (0x…) or Solana (base58) address. " +
+          "Merchant's receiving wallet address: a Base (0x...) or Solana (base58) address. " +
             "Usually extractable directly from a 402 Payment Required response's accepts[].payTo.",
         ),
       price: z.number().optional().describe("Quoted price in USD-equivalent, if checking fairness"),
@@ -319,7 +319,7 @@ function createServer(env: Env, accepts: PaymentRequirements[], resourceServer: 
         .string()
         .optional()
         .describe(
-          "Deprecated, accepted but unused — price-fairness now compares against the merchant's " +
+          "Deprecated, accepted but unused. Price-fairness now compares against the merchant's " +
             "own on-chain-derived category automatically, no need to supply this.",
         ),
     },

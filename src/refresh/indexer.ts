@@ -143,7 +143,7 @@ export class BazaarDataSource implements ChainDataSource {
     const activity = this.cache.get(walletAddress.toLowerCase());
     if (!activity) {
       throw new Error(
-        `No cached Bazaar activity for ${walletAddress} — listActiveMerchants() must run ` +
+        `No cached Bazaar activity for ${walletAddress}. listActiveMerchants() must run ` +
           `first on this same BazaarDataSource instance.`,
       );
     }

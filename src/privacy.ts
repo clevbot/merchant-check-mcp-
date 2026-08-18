@@ -25,7 +25,7 @@ export const LAST_UPDATED = "2026-08-13";
 export const CONTACT_EMAIL = "colin.cleven@gmail.com";
 
 export function renderPrivacyPolicyHtml(): string {
-  return `<title>Privacy Policy — Gradient Decisions</title>
+  return `<title>Privacy Policy | Gradient Decisions</title>
 <meta name="description" content="How Gradient Decisions handles data for x402 Merchant Check.">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 ${FAVICON_LINK}
@@ -85,7 +85,7 @@ ${FONT_LINKS}
 
   <p>
     This policy describes how <strong>Gradient Decisions</strong> ("we", "us") handles data in
-    connection with <strong>x402 Merchant Check</strong> — the <code>check_merchant</code> MCP tool at
+    connection with <strong>x402 Merchant Check</strong>: the <code>check_merchant</code> MCP tool at
     <code>mcp.gradientdecisions.com</code> and the public dashboard at
     <code>gradientdecisions.com</code>. It's written to describe what this system actually does,
     not generic boilerplate.
@@ -97,7 +97,7 @@ ${FONT_LINKS}
     unfamiliar merchant via the x402 protocol, an agent can call <code>check_merchant</code> with a
     wallet address and receive an assessment of that merchant's observable on-chain payment
     behavior. The merchant data behind this is aggregated from public blockchain activity and
-    public discovery feeds (Coinbase's x402 Bazaar, PayAI Network, Helius) — not collected from
+    public discovery feeds (Coinbase's x402 Bazaar, PayAI Network, Helius), not collected from
     individuals.
   </p>
 
@@ -109,28 +109,28 @@ ${FONT_LINKS}
   </p>
   <ol>
     <li>
-      <strong>Merchant wallet data</strong> — for every merchant wallet address we've indexed
+      <strong>Merchant wallet data.</strong> For every merchant wallet address we've indexed
       (Base or Solana): its transaction count, unique-payer count, advertised prices, category,
       and known platform/service URLs. This is public on-chain and public-discovery-feed data
       about <em>merchants</em>, not about the people calling this service.
     </li>
     <li>
-      <strong>Caller wallet data</strong> — when a wallet pays to call <code>check_merchant</code>,
+      <strong>Caller wallet data.</strong> When a wallet pays to call <code>check_merchant</code>,
       we log: the paying wallet's address, the merchant wallet it checked, the on-chain payment
       transaction hash, the category/price if supplied, and a timestamp. This lets us track usage
       of the service and, in aggregate, understand who's using it and how often.
     </li>
   </ol>
   <p>
-    <strong>We never attempt to link a wallet address to any off-chain identity</strong> — a name,
+    <strong>We never attempt to link a wallet address to any off-chain identity:</strong> a name,
     an email address, an IP-derived identity, or any other real-world identifier. This is a
     deliberate design principle applied consistently throughout this system, not just a policy
-    statement: nothing in our code performs or attempts identity resolution.
+    statement. Nothing in our code performs or attempts identity resolution.
   </p>
   <p>
     <strong>Infrastructure-level logging.</strong> This service runs on Cloudflare Workers.
     Cloudflare, as our hosting/CDN provider, processes standard technical request data (e.g. IP
-    addresses, request metadata) as part of operating its network — this is typical of any
+    addresses, request metadata) as part of operating its network. This is typical of any
     Cloudflare-hosted service and is governed by Cloudflare's own role as an infrastructure
     provider, not data we separately collect or store ourselves beyond what's described above.
   </p>
@@ -150,7 +150,7 @@ ${FONT_LINKS}
   <h2>Payment processing</h2>
   <p>
     Payments are made via the x402 protocol in USDC on Base mainnet. Payment verification and
-    settlement is performed by Coinbase's CDP facilitator infrastructure, not by us directly — we
+    settlement is performed by Coinbase's CDP facilitator infrastructure, not by us directly. We
     receive and store the resulting on-chain transaction hash as proof of payment, which is itself
     public blockchain data.
   </p>
@@ -159,7 +159,7 @@ ${FONT_LINKS}
   <p>
     We do not sell wallet-level data. We do not share caller wallet data with third parties for
     advertising or marketing purposes. We do pull <em>from</em> public third-party data sources to
-    build merchant assessments (Coinbase's x402 Bazaar, PayAI Network, Helius) — this is data we
+    build merchant assessments (Coinbase's x402 Bazaar, PayAI Network, Helius). That is data we
     read, not data we send about our users.
   </p>
 
@@ -175,7 +175,7 @@ ${FONT_LINKS}
   <h2>Your rights</h2>
   <p>
     Because we don't collect off-chain identity and don't operate accounts, we have no way to
-    independently verify that a request relates to "your" wallet versus anyone else's — requests
+    independently verify that a request relates to "your" wallet versus anyone else's. Requests
     are handled on a best-effort, case-by-case basis. If you'd like us to look into or remove data
     associated with a specific wallet address from our own systems, contact us at the address below
     with the wallet address in question. We'll respond and do what we reasonably can, with the
@@ -186,7 +186,7 @@ ${FONT_LINKS}
     If you are located in a jurisdiction with specific statutory rights over personal data (e.g.
     GDPR in the EU/UK, CCPA in California), we intend to honor requests consistent with those
     rights to the extent they apply to the limited, wallet-address-level data described in this
-    policy — contact us and we'll work through it with you.
+    policy. Contact us and we'll work through it with you.
   </p>
 
   <h2>Children's privacy</h2>
