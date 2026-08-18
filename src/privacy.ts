@@ -19,6 +19,8 @@
  * README "Privacy policy".
  */
 
+import { BRAND_CSS, FAVICON_LINK, FONT_LINKS, renderMonogram, renderWordmark } from "./brand";
+
 export const LAST_UPDATED = "2026-08-13";
 export const CONTACT_EMAIL = "colin.cleven@gmail.com";
 
@@ -26,21 +28,37 @@ export function renderPrivacyPolicyHtml(): string {
   return `<title>Privacy Policy — Gradient Decisions</title>
 <meta name="description" content="How Gradient Decisions handles data for x402 Merchant Check.">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+${FAVICON_LINK}
+${FONT_LINKS}
 <style>
-  :root { --bg: #f7f7f8; --surface: #ffffff; --border: #e4e4e7; --text: #18181b; --text-dim: #6b7280; --accent: #4f46e5; }
+  :root {
+    --bg: #f7f7f8; --surface: #ffffff; --border: #e4e4e7; --text: #18181b; --text-dim: #6b7280; --accent: #4f46e5;
+    /* Monochrome fade (same treatment as the actual logo's letterform fade,
+       see src/brand.ts), not an invented color gradient — see
+       src/dashboard.ts's matching comment for the full reasoning. */
+    --brand-gradient: linear-gradient(90deg, var(--accent) 0%, transparent 100%);
+  }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #0b0b0d; --surface: #17171a; --border: #2a2a2e; --text: #f4f4f5; --text-dim: #9ca3af; --accent: #818cf8; }
+    :root {
+      --bg: #0b0b0d; --surface: #17171a; --border: #2a2a2e; --text: #f4f4f5; --text-dim: #9ca3af; --accent: #818cf8;
+      --brand-gradient: linear-gradient(90deg, var(--accent) 0%, transparent 100%);
+    }
   }
   * { box-sizing: border-box; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+    font-family: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
     line-height: 1.6;
   }
+  ${BRAND_CSS}
   .wrap { max-width: 680px; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
-  h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+  .topbar { height: 3px; background: var(--brand-gradient); margin: -2.5rem -1.5rem 2rem; }
+  .brand-row { display: flex; align-items: center; gap: .65rem; margin-bottom: .6rem; }
+  .brand-row .brand-mark { width: 28px; }
+  .brand-row .brand-sub { font-size: .74rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: .06em; }
+  h1 { font-size: 1.6rem; font-weight: 600; margin: 0 0 .25rem; letter-spacing: -.01em; }
   .updated { color: var(--text-dim); font-size: .85rem; margin-bottom: 2rem; }
-  h2 { font-size: 1.05rem; margin: 2rem 0 .75rem; }
+  h2 { font-size: 1.05rem; font-weight: 600; margin: 2rem 0 .75rem; }
   p, li { font-size: .92rem; }
   ol, ul { padding-left: 1.3rem; }
   a { color: var(--accent); }
@@ -53,9 +71,15 @@ export function renderPrivacyPolicyHtml(): string {
     background: var(--surface); color: var(--text-dim); font-size: .82rem; font-style: italic;
   }
   footer { margin-top: 2.5rem; color: var(--text-dim); font-size: .82rem; }
+  .footer-brand { opacity: .55; margin-bottom: .85rem; }
   footer a { color: var(--accent); }
 </style>
+<div class="topbar"></div>
 <div class="wrap">
+  <div class="brand-row">
+    ${renderMonogram("privacy-header", 28)}
+    <span class="brand-sub">Gradient Decisions</span>
+  </div>
   <h1>Privacy Policy</h1>
   <p class="updated">Last updated: ${LAST_UPDATED}</p>
 
@@ -194,7 +218,8 @@ export function renderPrivacyPolicyHtml(): string {
   </p>
 
   <footer>
-    Part of <strong>Gradient Decisions</strong>. <a href="/">Back to dashboard</a>.
+    <div class="footer-brand">${renderWordmark("privacy-footer", 120)}</div>
+    <a href="/">Back to dashboard</a>.
   </footer>
 </div>`;
 }

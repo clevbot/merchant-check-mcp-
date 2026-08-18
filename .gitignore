@@ -6,3 +6,10 @@ dist/
 .env.mainnet-test
 *.log
 .DS_Store
+# Local Claude Code skill installations — tooling config for this
+# environment, not project source (see the design-taste-frontend skill
+# used for the 2026-08-18 branding pass; its actual output lives in
+# src/brand.ts and the pages that use it, not here).
+.agents/skills/
+.claude/skills/
+skills-lock.json

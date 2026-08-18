@@ -25,6 +25,7 @@
 
 import type { Env } from "./types";
 import { escapeHtml } from "./dashboard";
+import { BRAND_CSS, FAVICON_LINK, renderMonogram } from "./brand";
 
 export interface CallerFrequencyRow {
   payer_address: string;
@@ -177,19 +178,34 @@ export function renderCallerDashboardHtml(data: CallerAnalytics): string {
 
   return `<title>Internal — Caller Analytics</title>
 <meta name="robots" content="noindex, nofollow">
+${FAVICON_LINK}
 <style>
-  body { font-family: ui-monospace, SFMono-Regular, monospace; background: #0b0b0d; color: #e4e4e7; padding: 2rem; }
+  :root { --text: #e4e4e7; --accent: #818cf8; --brand-gradient: linear-gradient(90deg, var(--accent) 0%, transparent 100%); }
+  * { box-sizing: border-box; }
+  body { font-family: ui-monospace, SFMono-Regular, monospace; background: #0b0b0d; color: #e4e4e7; margin: 0; padding: 2rem; }
+  .topbar { height: 3px; background: var(--brand-gradient); margin: -2rem -2rem 1.75rem; }
+  .brand-row { display: flex; align-items: center; gap: .55rem; margin-bottom: 1rem; color: #e4e4e7; }
+  .brand-row .brand-mark { width: 22px; }
+  .brand-row span { font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: #6b7280; }
   h1, h2 { font-weight: 600; }
-  h1 { font-size: 1.2rem; } h2 { font-size: 1rem; margin-top: 2rem; color: #9ca3af; }
+  h1 { font-size: 1.2rem; margin: 0 0 .75rem; } h2 { font-size: 1rem; margin-top: 2rem; color: #9ca3af; }
   table { border-collapse: collapse; width: 100%; margin-top: .5rem; }
   th, td { text-align: left; padding: .4rem .7rem; border-bottom: 1px solid #27272a; font-size: .82rem; }
   th { color: #9ca3af; text-transform: uppercase; font-size: .7rem; }
   td.num { text-align: right; }
   .stats { display: flex; gap: 1.5rem; margin: 1rem 0; }
-  .stat b { font-size: 1.3rem; display: block; }
+  /* Flat accent color, not gradient-clipped text — a fade-to-transparent
+     treatment risks the tail of a number becoming illegible, which matters
+     more than the decorative effect on a data page (see src/brand.ts
+     module comment / this file's earlier revision for why the gradient
+     itself changed from an invented color scheme to a monochrome fade). */
+  .stat b { font-size: 1.3rem; display: block; color: var(--accent); }
   .note { color: #6b7280; font-size: .78rem; max-width: 70ch; }
+  ${BRAND_CSS}
 </style>
-<h1>Internal — check_merchant caller analytics</h1>
+<div class="topbar"></div>
+<div class="brand-row">${renderMonogram("caller-header", 22)}<span>Gradient Decisions — Internal</span></div>
+<h1>check_merchant caller analytics</h1>
 <p class="note">
   Internal only, not linked from the public site. Tracks wallet-level usage of check_merchant
   itself — who's paying to check merchants, how often, what categories — as confirmed-intent

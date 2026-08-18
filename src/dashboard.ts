@@ -4,6 +4,7 @@ import { SOLANA_MAINNET_NETWORK } from "./refresh/solana-indexer";
 import { CATEGORIES } from "./categorize/types";
 import { MIN_TX_FOR_CONFIDENCE, median, scorePriceFairness } from "./scoring";
 import { deriveConfidence, derivePayerConcentration, deriveRecommendation } from "./tool";
+import { BRAND_CSS, FAVICON_LINK, FONT_LINKS, renderMonogram, renderWordmark } from "./brand";
 
 interface RawDashboardRow {
   wallet_address: string;
@@ -275,32 +276,48 @@ export function renderDashboardHtml(data: DashboardData): string {
   return `<title>x402 Merchant Check — Gradient Decisions</title>
 <meta name="description" content="Pre-payment merchant intelligence for x402 agents: live recommendations for Base and Solana merchants, scored from observable on-chain payment behavior.">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+${FAVICON_LINK}
+${FONT_LINKS}
 <style>
   :root {
     --bg: #f7f7f8; --surface: #ffffff; --border: #e4e4e7; --text: #18181b; --text-dim: #6b7280;
     --proceed: #16a34a; --proceed-bg: #dcfce7; --caution: #b45309; --caution-bg: #fef3c7;
     --insufficient: #6b7280; --insufficient-bg: #f1f1f3; --accent: #4f46e5;
+    /* Monochrome fade, not an invented color gradient — this is the same
+       horizontal-opacity-fade treatment the actual logo uses (see
+       src/brand.ts), just applied to a UI accent instead of letterforms.
+       Deliberately not a hue gradient (indigo->violet->magenta was here
+       originally): that's a decorative color scheme with no basis in the
+       real brand assets, and this is a trust-first commerce product, not
+       an agency/playful brand — restraint over decoration. */
+    --brand-gradient: linear-gradient(90deg, var(--accent) 0%, transparent 100%);
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0b0b0d; --surface: #17171a; --border: #2a2a2e; --text: #f4f4f5; --text-dim: #9ca3af;
       --proceed: #4ade80; --proceed-bg: #14532d; --caution: #fbbf24; --caution-bg: #78350f;
       --insufficient: #9ca3af; --insufficient-bg: #27272a; --accent: #818cf8;
+      --brand-gradient: linear-gradient(90deg, var(--accent) 0%, transparent 100%);
     }
   }
   * { box-sizing: border-box; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+    font-family: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
     line-height: 1.5;
   }
+  ${BRAND_CSS}
   .wrap { max-width: 1080px; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
-  header h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+  .topbar { position: relative; height: 3px; background: var(--brand-gradient); margin: -2.5rem -1.5rem 2rem; }
+  .brand-row { display: flex; align-items: center; gap: .65rem; margin-bottom: .6rem; }
+  .brand-row .brand-mark { width: 30px; }
+  .brand-row .brand-sub { font-size: .74rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: .06em; }
+  header h1 { font-size: 1.55rem; font-weight: 600; margin: 0 0 .25rem; letter-spacing: -.01em; }
   header p.tagline { color: var(--text-dim); margin: 0 0 1.75rem; max-width: 60ch; }
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: .75rem; margin-bottom: 1.75rem; }
   .stat-card {
     background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-    padding: 1rem 1.1rem;
+    padding: 1rem 1.1rem; box-shadow: 0 1px 2px rgba(0,0,0,.04);
   }
   .stat-card .n { font-size: 1.6rem; font-weight: 650; }
   .stat-card .label { font-size: .8rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: .03em; }
@@ -359,13 +376,19 @@ export function renderDashboardHtml(data: DashboardData): string {
     border: 1px solid var(--border); border-radius: 6px; padding: .1rem .4rem; margin: .1rem .2rem .1rem 0;
   }
   footer { margin-top: 2.5rem; color: var(--text-dim); font-size: .82rem; }
+  .footer-brand { opacity: .55; margin-bottom: .85rem; }
   footer a { color: var(--accent); }
   .empty { text-align: center; color: var(--text-dim); padding: 2rem; }
   .overflow { overflow-x: auto; }
   code.small { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: .1rem .35rem; font-size: .82rem; }
 </style>
+<div class="topbar"></div>
 <div class="wrap">
   <header>
+    <div class="brand-row">
+      ${renderMonogram("dash-header", 30)}
+      <span class="brand-sub">Gradient Decisions</span>
+    </div>
     <h1>x402 Merchant Check</h1>
     <p class="tagline">
       Context for agentic buying decisions: merchant trust tiers for autonomous agent
@@ -435,12 +458,12 @@ export function renderDashboardHtml(data: DashboardData): string {
   </div>
 
   <footer>
+    <div class="footer-brand">${renderWordmark("dash-footer", 130)}</div>
     Data sources: <a href="https://docs.cdp.coinbase.com/x402/bazaar" target="_blank" rel="noopener">x402 Bazaar</a>
     (Base mainnet) and <a href="https://facilitator.payai.network" target="_blank" rel="noopener">PayAI Network</a>
     discovery + Helius RPC (Solana mainnet). Refreshed periodically —
     last update ${lastRefreshedAt ? relativeTime(lastRefreshedAt) : "never"}.
-    Part of <strong>Gradient Decisions</strong>. Raw data:
-    <a href="/api/wallets">/api/wallets</a>. <a href="/privacy">Privacy policy</a>.
+    Raw data: <a href="/api/wallets">/api/wallets</a>. <a href="/privacy">Privacy policy</a>.
   </footer>
 </div>
 <script>
