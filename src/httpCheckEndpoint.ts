@@ -29,8 +29,10 @@ import { x402HTTPResourceServer } from "@x402/core/http";
 import type { HTTPAdapter, RoutesConfig } from "@x402/core/http";
 import type { Network } from "@x402/core/types";
 import type { x402ResourceServer } from "@x402/core/server";
+import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { checkMerchant } from "./tool";
 import { logQuery } from "./db/queries";
+import { SAMPLE_CHECK_MERCHANT_INPUT, SAMPLE_CHECK_MERCHANT_OUTPUT } from "./agentReadiness";
 import type { CheckMerchantInput, Env } from "./types";
 
 /**
@@ -99,6 +101,36 @@ function getHttpResourceServer(env: Env, resourceServer: x402ResourceServer): Pr
             "real x402 settlement history on Base and Solana. Decision support, not a certification.",
           mimeType: "application/json",
           serviceName: "x402 Merchant Check",
+          // Bazaar discovery metadata (2026-08-19, found missing while
+          // investigating why real settled payments on this exact route
+          // never triggered a Bazaar listing) — per docs.x402.org/extensions/
+          // bazaar, cataloging happens when a paying client echoes the
+          // extension data a server declared in its 402 challenge; this
+          // route never declared any extension at all, so there was
+          // nothing for any client to echo, independent of anything the
+          // *client* side does. The MCP path (src/index.ts) already
+          // declares this via createPaymentWrapper's own `extensions`
+          // option; this is the HTTP-route equivalent, using the "GET with
+          // query params" variant of declareDiscoveryExtension (see its
+          // own JSDoc examples) since merchant_wallet_address arrives as a
+          // query param here, not a tool argument or JSON body. Reuses the
+          // same canonical sample input/output as auth.md and the MCP
+          // path's own declaration (src/agentReadiness.ts) rather than a
+          // third copy.
+          extensions: declareDiscoveryExtension({
+            input: SAMPLE_CHECK_MERCHANT_INPUT,
+            inputSchema: {
+              properties: {
+                merchant_wallet_address: {
+                  type: "string",
+                  description: "Merchant's receiving wallet address: a Base (0x...) or Solana (base58) address.",
+                },
+                price: { type: "number", description: "Quoted price in USD-equivalent, if checking fairness" },
+              },
+              required: ["merchant_wallet_address"],
+            },
+            output: { example: SAMPLE_CHECK_MERCHANT_OUTPUT },
+          }),
         },
       };
       const httpServer = new x402HTTPResourceServer(resourceServer, routes);
