@@ -31,20 +31,33 @@ export async function categorizeByModel(
   // convention the tracing doc defers to) is a clean, unambiguous fit,
   // unlike check_merchant's `execute_tool` span (src/tool.ts), which
   // required more judgment since this Worker isn't itself an agent.
+  // Nested under an `invoke_agent` span for the same reason documented on
+  // check_merchant's version — the dashboard's Agents/Sessions/Runs/Tokens
+  // rollup specifically counts `invoke_agent` spans carrying
+  // gen_ai.agent.*/conversation.id, a bare `chat` span alone never
+  // populates it. Each classification call is its own one-turn "session".
   // Attributes are usage/outcome metadata only — the listing description
   // and model output text are never attached to the span, same
   // metadata-only default applied to check_merchant's span.
-  return tracing.enterSpan("chat", async (span) => {
-    span.setAttributes({
-      "gen_ai.operation.name": "chat",
-      "gen_ai.request.model": MODEL,
-      "gen_ai.system": "anthropic",
+  return tracing.enterSpan("invoke_agent", async (turnSpan) => {
+    turnSpan.setAttributes({
+      "gen_ai.operation.name": "invoke_agent",
+      "gen_ai.agent.name": "merchant-check-mcp-categorizer",
+      "gen_ai.agent.id": "categorize_by_model",
+      "gen_ai.conversation.id": crypto.randomUUID(),
     });
-    const result = await categorizeByModelImpl(description, env);
-    span.setAttributes({
-      "categorize.outcome": result.category ? "classified" : result.unparseable ? "unparseable" : "call_failed",
+    return tracing.enterSpan("chat", async (span) => {
+      span.setAttributes({
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": MODEL,
+        "gen_ai.system": "anthropic",
+      });
+      const result = await categorizeByModelImpl(description, env);
+      span.setAttributes({
+        "categorize.outcome": result.category ? "classified" : result.unparseable ? "unparseable" : "call_failed",
+      });
+      return result;
     });
-    return result;
   });
 }
 

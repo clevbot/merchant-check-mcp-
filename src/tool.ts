@@ -113,38 +113,58 @@ export function derivePayerConcentration(uniquePayers: number, totalTxCount: num
  * — this project has no Think/Flue/AI SDK agent loop (see the "Revisited
  * 2026-08-19" addendum on the MCP-stack comment near the top of
  * src/index.ts for why not, and why that's the right call), so it falls
- * into the doc's "Custom" bucket: instrument
- * with the Workers custom spans API directly. `invoke_agent`/`tool_approval`
- * don't apply here (there's no multi-step reasoning turn happening in this
- * Worker — a caller *is* the agent; we're the tool it calls), but
- * `execute_tool` is an exact fit: this function *is* the tool execution the
- * whole system exists to sell. See src/categorize/model.ts's `chat` span
- * for the one genuine LLM call in this codebase.
+ * into the doc's "Custom" bucket: instrument with the Workers custom spans
+ * API directly.
  *
- * Attributes are deliberately non-identifying-of-the-caller: merchant
- * wallet address, chain, category, and recommendation are already
- * disclosed/logged elsewhere (query_log, the privacy policy's "merchant
- * wallet data" section) and describe the *merchant* being evaluated, a
- * public on-chain identity, not the caller. The caller's own wallet
- * address is captured separately (query_log.payer_address via
- * onAfterSettlement / GET /check's settlement) and deliberately kept out
- * of trace attributes here, since this function never sees it.
+ * Corrected same day, after the user pointed at the dashboard's "Agents"
+ * rollup page (Agents/Sessions/Runs/Tokens) and it showed all zeros: that
+ * view specifically counts `invoke_agent` spans carrying
+ * `gen_ai.agent.name`/`gen_ai.agent.id`/`gen_ai.conversation.id` as its
+ * unit of a "Run" — a bare top-level `execute_tool` span (the original
+ * version of this comment's reasoning: "we're the tool being called, not
+ * the agent") is semantically defensible under the strict OTel GenAI
+ * convention, but it structurally can never populate that specific page,
+ * regardless of real traffic. Fixed by wrapping the same `execute_tool`
+ * span in an outer `invoke_agent` span representing the turn — this
+ * server's identity ("merchant-check-mcp") stands in as "the agent" for
+ * Cloudflare's dashboard vocabulary, which is the pragmatic reading the
+ * UI wants, not a claim that this Worker reasons autonomously. Each call
+ * is its own one-turn session (no cross-call state — see README "Pre-
+ * payment decision primitive"), so `gen_ai.conversation.id` is a fresh
+ * `crypto.randomUUID()` per invocation, not a persisted value.
+ *
+ * Attributes stay non-identifying-of-the-caller: merchant wallet address,
+ * chain, category, and recommendation are already disclosed/logged
+ * elsewhere (query_log, the privacy policy's "merchant wallet data"
+ * section) and describe the *merchant* being evaluated, a public
+ * on-chain identity, not the caller. The caller's own wallet address is
+ * captured separately (query_log.payer_address via onAfterSettlement /
+ * GET /check's settlement) and deliberately kept out of trace attributes
+ * here, since this function never sees it.
  */
 export async function checkMerchant(env: Env, input: CheckMerchantInput): Promise<CheckMerchantOutput> {
-  return tracing.enterSpan("execute_tool", async (span) => {
-    span.setAttributes({
-      "gen_ai.operation.name": "execute_tool",
-      "gen_ai.tool.name": "check_merchant",
+  return tracing.enterSpan("invoke_agent", async (turnSpan) => {
+    turnSpan.setAttributes({
+      "gen_ai.operation.name": "invoke_agent",
+      "gen_ai.agent.name": "merchant-check-mcp",
+      "gen_ai.agent.id": "check_merchant",
+      "gen_ai.conversation.id": crypto.randomUUID(),
     });
-    const output = await checkMerchantImpl(env, input);
-    span.setAttributes({
-      "check_merchant.merchant_wallet_address": output.merchant,
-      "check_merchant.chain": output.chain ?? "unknown",
-      "check_merchant.category": output.category ?? "unknown",
-      "check_merchant.recommendation": output.recommendation,
-      "check_merchant.data_sufficiency": output.data_sufficiency,
+    return tracing.enterSpan("execute_tool", async (toolSpan) => {
+      toolSpan.setAttributes({
+        "gen_ai.operation.name": "execute_tool",
+        "gen_ai.tool.name": "check_merchant",
+      });
+      const output = await checkMerchantImpl(env, input);
+      toolSpan.setAttributes({
+        "check_merchant.merchant_wallet_address": output.merchant,
+        "check_merchant.chain": output.chain ?? "unknown",
+        "check_merchant.category": output.category ?? "unknown",
+        "check_merchant.recommendation": output.recommendation,
+        "check_merchant.data_sufficiency": output.data_sufficiency,
+      });
+      return output;
     });
-    return output;
   });
 }
 
