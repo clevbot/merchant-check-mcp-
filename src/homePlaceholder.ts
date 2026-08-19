@@ -189,17 +189,6 @@ ${FIGMA_FONT_LINKS}
     --r-sm: 6px; --r-md: 8px; --r-lg: 12px; --r-xl: 18px; --r-pill: 999px;
     --shadow: 0 1px 2px rgba(17,24,39,.04);
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0b0b0d; --bg-soft: #17110f; --bg-muted: #131316; --surface: #17171a; --border: #2a2a2e;
-      --text: #f4f4f5; --text-body: #d4d4d8; --text-dim: #9ca3af;
-      --accent: #fdba74; --accent-ink: #fdba74; --accent-tint: rgba(253,186,116,0.14);
-      --accent2: #fbcfe8; --accent2-ink: #f9a8d4; --accent2-tint: rgba(251,207,232,0.14);
-      --proceed: #4ade80; --proceed-bg: #14532d; --caution: #fbbf24; --caution-bg: #78350f;
-      --insufficient: #9ca3af; --insufficient-bg: #27272a;
-      --shadow: 0 1px 2px rgba(0,0,0,.3);
-    }
-  }
   * { box-sizing: border-box; }
   html { scroll-behavior: smooth; }
   body {
@@ -250,9 +239,10 @@ ${FIGMA_FONT_LINKS}
   @media (max-width: 720px) { nav.topnav .navlinks { display: none; } }
 
   /* Same pink-to-orange gradient as the logo mark (#fbcfe8 -> #fdba74), applied
-     as the hero band's background — fixed, not theme-dependent, so the hero's
-     own text/tag/button colors below are hardcoded to values that stay legible
-     against this light gradient regardless of site-wide light/dark mode. */
+     as the hero band's background. The hero's own text/tag/secondary-button
+     colors below are hardcoded (not the shared --text/--text-dim/--border
+     tokens) since they're tuned for contrast against this specific light
+     gradient, not just inherited page defaults. */
   .hero { text-align: center; padding-top: 5.5rem; padding-bottom: 3.5rem; background: linear-gradient(120deg, #fbcfe8 0%, #fdba74 100%); }
   .hero h1 { font-size: clamp(2.1rem, 5.5vw, 3.4rem); font-weight: 800; line-height: 1.08; max-width: 820px; margin: 1.25rem auto 1.25rem; color: #111827; }
   .hero p.lede { max-width: 620px; margin: 0 auto 2rem; color: #57433a; font-size: 1.05rem; }
