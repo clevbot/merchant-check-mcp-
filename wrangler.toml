@@ -25,6 +25,20 @@ database_id = "0964f469-94f4-4da1-94a7-6033d89ccb9a"
 crons = ["0 */4 * * *", "0 0 1 * *"]
 
 # ---------------------------------------------------------------------------
+# Workers Logs (2026-08-19) — enabled at the user's request to get real
+# per-request logs (path, status, duration, errors) instead of inferring
+# traffic patterns from the Metrics tab's per-version/per-datacenter
+# aggregates. Free tier, up to 200K events/day, sampled beyond that. Set
+# here rather than via the dashboard toggle: the dashboard's "Enable
+# Observability" button was reproducibly redirecting to Settings instead of
+# committing (tried 4 times) — this is the config it would have written
+# anyway, per the diff it showed before failing to save.
+# ---------------------------------------------------------------------------
+[observability.logs]
+enabled = true
+invocation_logs = true
+
+# ---------------------------------------------------------------------------
 # Custom domains. gradientdecisions.com is already a Cloudflare zone on this
 # account, so `custom_domain = true` provisions the DNS record + SSL cert
 # automatically on deploy — no manual CNAME needed.
