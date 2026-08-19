@@ -12,10 +12,9 @@ import { logQuery, getMetricsSummary } from "./db/queries";
 import type { CheckMerchantOutput, Env } from "./types";
 import { runRefresh } from "./refresh";
 import { runCategorization } from "./categorize";
-import { getDashboardData, renderDashboardHtml, dashboardDataToJson } from "./dashboard";
 import { getCallerAnalytics, renderCallerDashboardHtml, callerAnalyticsToJson } from "./callerDashboard";
 import { renderPrivacyPolicyHtml } from "./privacy";
-import { getMerchantProfileData, renderMerchantNotFoundHtml, renderMerchantProfileHtml } from "./merchantProfile";
+import { renderHomePlaceholderHtml } from "./homePlaceholder";
 
 /**
  * Payment stack: @x402/core + @x402/evm + @x402/mcp — the official Coinbase/
@@ -437,36 +436,51 @@ export default {
       });
     }
 
-    // Human-facing dashboard (gradientdecisions.com) and agent-facing MCP
+    // Human-facing homepage (gradientdecisions.com) and agent-facing MCP
     // endpoint (mcp.gradientdecisions.com) share this one Worker — routed
     // by pathname rather than hostname so it also works from the
     // workers.dev fallback URL and during local testing.
+    //
+    // 2026-08-19: this used to render the full live dashboard (every scored
+    // merchant's recommendation/signals/pricing, straight from D1). Locked
+    // down — see "Data access policy" in README — because that gave any
+    // agent (or script) the exact same read `check_merchant` charges
+    // $0.01/query for, completely free, which undercut the paid product
+    // this whole system exists to sell. Now a static placeholder with no
+    // D1 query and nothing to leak; the real redesigned dashboard is a
+    // separate, later task built from Figma mockups, not rebuilt here.
     if (url.pathname === "/" || url.pathname === "/dashboard") {
-      const data = await getDashboardData(env);
-      return new Response(renderDashboardHtml(data), {
-        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=60" },
+      return new Response(renderHomePlaceholderHtml(), {
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=300" },
       });
     }
-    if (url.pathname === "/api/wallets") {
-      return dashboardDataToJson(await getDashboardData(env));
+    // 2026-08-19: retired, same reasoning as the homepage above — this was
+    // the raw-JSON version of the same full dataset (every field the
+    // scoring engine produces, straight from D1), the single most direct
+    // leak vector of all: no rendering, no throttling, trivially scriptable.
+    // Matches on prefix and every HTTP method (not just GET) so
+    // `/api/wallets/`, `/api/wallets?chain=base`, HEAD, OPTIONS, POST, etc.
+    // all land here too rather than falling through to some other handler.
+    // No CORS headers, no-store so nothing stale gets served from cache —
+    // see README "Data access policy" for the full writeup.
+    if (url.pathname === "/api/wallets" || url.pathname.startsWith("/api/wallets/")) {
+      return new Response("Not found.", {
+        status: 404,
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+      });
     }
-    // Per-merchant profile page (2026-08-18) — reachable by clicking either
-    // the wallet address or the platform name on the dashboard table above.
-    // Path segment is the raw wallet address (0x-hex or base58), so decode
-    // it but otherwise pass through untouched — chain-specific
-    // normalization/case-handling happens inside getMerchantProfileData
-    // (src/chains.ts), not here.
-    if (url.pathname.startsWith("/merchant/")) {
-      const rawAddress = decodeURIComponent(url.pathname.slice("/merchant/".length));
-      const profile = await getMerchantProfileData(env, rawAddress);
-      if (!profile) {
-        return new Response(renderMerchantNotFoundHtml(rawAddress), {
-          status: 404,
-          headers: { "Content-Type": "text/html; charset=utf-8" },
-        });
-      }
-      return new Response(renderMerchantProfileHtml(profile), {
-        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=60" },
+    // 2026-08-19: retired for the identical reason — a per-merchant profile
+    // page still returns the same recommendation/signals/pricing/reasons
+    // fields the paid tool sells, and an agent calling check_merchant
+    // already has the one wallet address it would need to read this page
+    // directly instead of paying. Code stays in src/merchantProfile.ts
+    // (unused, not deleted) in case a future paid or curated variant reuses
+    // it; not routed publicly. Matches on prefix + every method, same as
+    // /api/wallets above.
+    if (url.pathname === "/merchant" || url.pathname.startsWith("/merchant/")) {
+      return new Response("Not found.", {
+        status: 404,
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
       });
     }
     if (url.pathname === "/privacy") {
@@ -476,7 +490,7 @@ export default {
     }
 
     if (url.pathname !== "/mcp") {
-      return new Response("Not found. MCP endpoint is at /mcp, dashboard at /.", { status: 404 });
+      return new Response("Not found. MCP endpoint is at /mcp.", { status: 404 });
     }
 
     const resourceServer = await getResourceServer(env);

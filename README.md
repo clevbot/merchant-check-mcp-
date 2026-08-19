@@ -16,15 +16,15 @@ needs you before this goes further.
 ## Privacy policy
 
 Live at `gradientdecisions.com/privacy` (`src/privacy.ts`), linked from the
-dashboard footer and here. Drafted 2026-08-13 by Claude at direct request,
+homepage footer and here. Drafted 2026-08-13 by Claude at direct request,
 grounded in this system's actual data practices (what `query_log` and
 `merchant_signals` really store — see "Internal caller-tracking dashboard"
 above) rather than generic boilerplate. **Not reviewed by a lawyer** — the
 page itself says so, and that caveat should stay until it has been. Contact
-email is currently the developer's personal address
-(`colin.cleven@gmail.com`, the only real email available in this session);
-swap for a dedicated address in `src/privacy.ts`'s `CONTACT_EMAIL` constant
-when one exists.
+email is `info@gradientdecisions.com` (switched 2026-08-19 from the
+developer's personal address — see "Data access policy" below for why and
+how). `src/privacy.ts`'s `CONTACT_EMAIL` constant is the source of truth if
+it ever needs to change again.
 
 ```
 DISCOVER → IDENTIFY PAYMENT DESTINATION → GRADIENT MERCHANT CHECK → AGENT PAYMENT POLICY → X402 PAYMENT
@@ -41,18 +41,75 @@ DISCOVER → IDENTIFY PAYMENT DESTINATION → GRADIENT MERCHANT CHECK → AGENT 
   `tools/call` correctly 402s → agent builds and signs an x402 payment,
   submits it → facilitator settles it → real tier comes back. See "Try it
   yourself" below.
-- **Humans**: `https://gradientdecisions.com` — a public dashboard of every
-  scored merchant (381 real Base wallets as of the last refresh, sourced
-  from the x402 Bazaar — see "Data source" — plus Solana merchants from
-  PayAI/Helius, see "Solana data source"), searchable and filterable by
-  tier, chain, and category (see "Categorization"). Same underlying data
-  agents pay for via MCP, free to browse. Raw JSON at `/api/wallets`.
-  Chain-level trust-tier breakdowns are kept visible alongside the combined
-  figures, not merged away — see "Solana signal caveats" for why.
+- **Humans**: `https://gradientdecisions.com` — as of 2026-08-19 a minimal
+  static placeholder (`src/homePlaceholder.ts`), not a live dashboard. It
+  used to render every scored merchant's recommendation/signals/pricing
+  directly, plus serve the same dataset as raw JSON at `/api/wallets` — see
+  "Data access policy" below for why that was locked down. The real
+  redesigned homepage/dashboard is a separate later task, built from Figma
+  mockups, not this placeholder.
 
 Note: the two-chain merchant-signal *data* above is separate from this
 endpoint's own payment rail — `check_merchant` itself is still only paid via
 Base x402 (see "Payment flow" line above); nothing about that has changed.
+
+## Data access policy (2026-08-19)
+
+Structured merchant data — `recommendation`, `signals`, `pricing`,
+`reasons`, `platforms`, anything `check_merchant` returns — is available
+**only** through the paid `check_merchant` MCP tool, paid per-query via
+x402. This wasn't always true, and the change is worth recording plainly:
+
+- `/` and `/dashboard` used to render a full live dashboard: every scored
+  merchant, with its recommendation, signals, reasons, and pricing, straight
+  from D1. Now a static placeholder (`src/homePlaceholder.ts`) with no D1
+  query at all.
+- `/api/wallets` used to serve the exact same dataset as raw JSON — no
+  rendering, no throttling, trivially scriptable. Now returns `404` for
+  every method and every sub-path (`/api/wallets/`, `?query` strings, HEAD,
+  OPTIONS, POST, ...), with `Cache-Control: no-store` and no CORS headers.
+- `/merchant/<address>` (a per-merchant profile page, added 2026-08-18 —
+  see git history) is retired the same way, same reasoning: it returned the
+  same fields for one wallet, and an agent calling `check_merchant` already
+  has the one address it would need to read that page for free instead of
+  paying. Code stays in `src/merchantProfile.ts`, unused, not deleted, in
+  case a future *paid* or curated variant reuses it.
+
+All three existed because giving humans/agents a free read of the same data
+`check_merchant` charges $0.01/query for directly undercut the product.
+`check_merchant` itself (`src/tool.ts`) was never affected — it has always
+read directly from D1 via `src/db/queries.ts` (`getMerchantSignals`,
+`getComparablePrices`, `getOwnPrices`), never through any of the routes
+above, so none of this required touching the paid tool's logic or schema.
+
+**Contact email.** The privacy policy's `CONTACT_EMAIL` (`src/privacy.ts`)
+is `info@gradientdecisions.com`, replacing the developer's personal Gmail
+address that used to appear there and in this file. It's set up as a
+**Cloudflare Email Routing forward** to that same personal inbox — mail to
+`info@` arrives at the existing Gmail, but the personal address itself no
+longer appears anywhere public-facing or committed. Email Routing is
+receive/forward-only: it cannot *send* mail as `info@gradientdecisions.com`.
+If sending-as is ever needed, that's a separate manual task (Google
+Workspace or custom SMTP), not something Email Routing does.
+
+To enable it (Cloudflare dashboard, since this session has no Cloudflare
+API token to do it via API — see "Manual steps" note in the PR/commit this
+section shipped with):
+1. Cloudflare dashboard → the `gradientdecisions.com` zone → **Email** →
+   **Email Routing**.
+2. Enable Email Routing for the zone. Cloudflare adds the required `MX`
+   records (routing to its own mail servers) and a `TXT` record
+   (`v=spf1 include:_spf.mx.cloudflare.net ~all`, or merged into an existing
+   SPF record if one's already there) automatically — no manual DNS entry
+   needed for a zone whose DNS Cloudflare already manages (true here, since
+   `custom_domain = true` in `wrangler.toml` already put this zone on
+   Cloudflare DNS).
+3. Add a routing rule: `info@gradientdecisions.com` → **Destination
+   address** → the existing personal Gmail address.
+4. Cloudflare sends a verification email to that Gmail address the first
+   time it's added as a destination — **this needs a human to click the
+   link**, it can't be done programmatically. Until that's clicked, mail to
+   `info@` won't actually forward.
 
 ## Categorization
 
@@ -549,7 +606,7 @@ say so. Verified against the live deployment before rewriting, not just
 edited from memory.
 
 Done:
-- ✅ Cloudflare account authenticated (`wrangler login`, colin.cleven@gmail.com).
+- ✅ Cloudflare account authenticated (`wrangler login`, developer's own account).
 - ✅ D1 database created (`merchant-signals`) and schema applied remotely.
 - ✅ **Live on Base mainnet**, real `PAYOUT_ADDRESS` — confirmed via real
   settled mainnet transactions with real tx hashes in `query_log` (I never

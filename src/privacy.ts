@@ -13,16 +13,17 @@
  * payments should have this reviewed for the jurisdictions its users are
  * actually in (GDPR/CCPA/etc.) before being treated as final.
  *
- * CONTACT_EMAIL is currently the developer's personal address (the only
- * real email available in this session's context) — swap for a dedicated
- * address (e.g. privacy@gradientdecisions.com) if/when one exists; see
- * README "Privacy policy".
+ * CONTACT_EMAIL is info@gradientdecisions.com (switched 2026-08-19 from the
+ * developer's personal address — see README "Data access policy"). It's a
+ * Cloudflare Email Routing forward, not a mailbox of its own — see that
+ * README section for the DNS/verification details and what forwarding
+ * means in practice.
  */
 
 import { BRAND_CSS, FAVICON_LINK, FONT_LINKS, renderMonogram, renderWordmark } from "./brand";
 
-export const LAST_UPDATED = "2026-08-13";
-export const CONTACT_EMAIL = "colin.cleven@gmail.com";
+export const LAST_UPDATED = "2026-08-19";
+export const CONTACT_EMAIL = "info@gradientdecisions.com";
 
 export function renderPrivacyPolicyHtml(): string {
   return `<title>Privacy Policy | Gradient Decisions</title>
@@ -86,7 +87,7 @@ ${FONT_LINKS}
   <p>
     This policy describes how <strong>Gradient Decisions</strong> ("we", "us") handles data in
     connection with <strong>x402 Merchant Check</strong>: the <code>check_merchant</code> MCP tool at
-    <code>mcp.gradientdecisions.com</code> and the public dashboard at
+    <code>mcp.gradientdecisions.com</code> and the informational site at
     <code>gradientdecisions.com</code>. It's written to describe what this system actually does,
     not generic boilerplate.
   </p>
@@ -138,7 +139,8 @@ ${FONT_LINKS}
   <h2>How we use this data</h2>
   <ul>
     <li>Merchant wallet data is used to compute and serve the trust/pricing assessment that
-      <code>check_merchant</code> returns, and to populate the public dashboard.</li>
+      <code>check_merchant</code> returns. As of 2026-08-19 that assessment is only served through
+      the paid <code>check_merchant</code> MCP tool, not a public dashboard or API.</li>
     <li>Caller wallet data is used to operate and improve the service: usage and revenue
       visibility, understanding call patterns (e.g. distinguishing one-off callers from
       repeat/active agents), and category-level demand signals. This may inform future product
@@ -219,7 +221,7 @@ ${FONT_LINKS}
 
   <footer>
     <div class="footer-brand">${renderWordmark("privacy-footer", 120)}</div>
-    <a href="/">Back to dashboard</a>.
+    <a href="/">Back to home</a>.
   </footer>
 </div>`;
 }
