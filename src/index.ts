@@ -16,6 +16,7 @@ import { getCallerAnalytics, renderCallerDashboardHtml, callerAnalyticsToJson } 
 import { renderPrivacyPolicyHtml } from "./privacy";
 import { renderHomePlaceholderHtml } from "./homePlaceholder";
 import { getDashboardSummary } from "./dashboard";
+import { ROBOTS_TXT, renderHomeMarkdown, renderSitemapXml, wantsMarkdown } from "./agentReadiness";
 
 /**
  * Payment stack: @x402/core + @x402/evm + @x402/mcp — the official Coinbase/
@@ -456,8 +457,32 @@ export default {
     // task built from Figma mockups, not rebuilt here.
     if (url.pathname === "/" || url.pathname === "/dashboard") {
       const summary = await getDashboardSummary(env);
+      // Content negotiation on Accept: text/markdown (2026-08-19, "Agent
+      // Readiness" quick win) — same signal Cloudflare's own Pro-only
+      // "Markdown for Agents" feature keys off, implemented here for free.
+      // Vary: Accept so any downstream/edge cache keys on it and never
+      // serves the wrong format to the next requester.
+      if (wantsMarkdown(request)) {
+        return new Response(renderHomeMarkdown(summary), {
+          headers: { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "public, max-age=60", Vary: "Accept" },
+        });
+      }
       return new Response(renderHomePlaceholderHtml(summary), {
-        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=60" },
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=60", Vary: "Accept" },
+      });
+    }
+    // "Agent Readiness" quick wins (2026-08-19) — robots.txt (with explicit
+    // AI-crawler allow rules and a Content-Signal line) and sitemap.xml, so
+    // the Cloudflare diagnostic's "Quick Wins" checks pass without needing
+    // its dashboard-side AI Crawl Control config. See src/agentReadiness.ts.
+    if (url.pathname === "/robots.txt") {
+      return new Response(ROBOTS_TXT, {
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=3600" },
+      });
+    }
+    if (url.pathname === "/sitemap.xml") {
+      return new Response(renderSitemapXml(), {
+        headers: { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=3600" },
       });
     }
     // 2026-08-19: retired, same reasoning as the homepage above — this was
