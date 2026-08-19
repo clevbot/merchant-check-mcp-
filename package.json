@@ -12,6 +12,7 @@
     "backtest": "tsx scripts/backtest.ts",
     "demo": "node --env-file=.env.demo --import tsx scripts/demo-client.ts",
     "mainnet-test": "node --env-file=.env.mainnet-test --import tsx scripts/mainnet-live-test.ts",
+    "mainnet-http-test": "node --env-file=.env.mainnet-test --import tsx scripts/mainnet-http-check-test.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p scripts/tsconfig.json && tsc --noEmit -p test/tsconfig.json",
     "test": "vitest run"
   },

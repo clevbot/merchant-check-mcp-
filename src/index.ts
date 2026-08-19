@@ -84,6 +84,18 @@ function getResourceServer(env: Env): Promise<x402ResourceServer> {
       // the moment a real payment settles through the CDP facilitator with
       // this extension registered — see README "x402 Bazaar listing".
       server.registerExtension(bazaarResourceServerExtension);
+      // Kept permanently, not just for GET /check's initial debugging
+      // (2026-08-19) — the default payment-error response body is empty
+      // ({}) by design (no unpaidResponseBody callback configured), which
+      // would otherwise hide the real verify-failure reason from our own
+      // logs for *any* caller on either payment path, not just test runs.
+      // This is exactly what diagnosed the GET /check test wallet running
+      // out of USDC in one log line instead of a guessing game — real
+      // ongoing value, not scaffolding to strip out. Logging costs nothing
+      // and never changes the response sent to the caller.
+      server.onVerifyFailure(async (ctx) => {
+        console.error("x402 verify failure:", ctx.error?.message ?? ctx.error, JSON.stringify(ctx.requirements));
+      });
       await server.initialize();
       return server;
     })();
