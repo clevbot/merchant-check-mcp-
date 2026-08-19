@@ -1,27 +1,51 @@
 /**
- * Public homepage (`/` and `/dashboard`), rewritten 2026-08-19 to stop
- * serving the full live dashboard. See README "Data access policy" for the
- * full reasoning: the old version rendered every scored merchant's
- * recommendation/signals/pricing directly in the page, and `/api/wallets`
- * served the same data as raw JSON, both for free — an agent (or anyone
- * scripting against either) could get the exact same read `check_merchant`
- * sells for $0.01/query without ever paying for it, which undercut the
- * paid MCP tool that is this product's actual business.
+ * Public homepage (`/` and `/dashboard`) — redesigned 2026-08-19 from a
+ * Figma landing-page mockup the user provided (file vRdeDaQ1zA4jzFhDodJ2eg,
+ * frame "gradient-decisions-landing"), pulled via the Figma REST API
+ * (no Figma desktop app / Dev Mode MCP available in this environment) and
+ * rebuilt as hand-written HTML/CSS, matching this Worker's existing
+ * architecture (no framework, no static asset hosting — every page is a
+ * generated string, same as src/dashboard.ts and src/merchantProfile.ts).
  *
- * Added back 2026-08-19 at the user's request: aggregate-only summary
- * stats (total merchants, PROCEED/CAUTION/INSUFFICIENT_SIGNAL counts, and
- * the same split by chain) — genuinely safe to publish for free, since
- * none of it lets a caller look up any specific merchant's trust status
- * the way the old dashboard, `/api/wallets`, or the retired `/merchant/*`
- * profile pages did. Computed by src/dashboard.ts's getDashboardSummary(),
- * which queries only (chain, tier, total_tx_count) — no wallet address, no
- * per-merchant data ever leaves D1 for this page. The real redesigned
- * homepage/dashboard UI is still a separate, later task from Figma
- * mockups — this stays a lightweight stats page until then, not the full
- * per-merchant table.
+ * Deliberately NOT a literal copy of the Figma content. The mockup's own
+ * copy was generic AI-SaaS placeholder text describing a different product
+ * ("real-time price intelligence", "deal validation", "50M+ prices
+ * analyzed", "18% average cost savings", "150+ transactional APIs") with no
+ * basis in anything this service actually does or measures. What's kept
+ * from the Figma is the *visual system* — layout, type scale (Gabarito
+ * headings / Geist body / Geist Mono for labels+code), color tokens (peach
+ * #fdba74 + pink #fbcfe8 dual-accent, extracted from the file's actual
+ * node fills, not eyeballed), card grids, code-block mockup, stats band,
+ * and footer structure. All copy and every number below is real:
+ * - The stats band renders live getDashboardSummary() data (same aggregate
+ *   counts the pre-redesign placeholder showed), not the mockup's invented
+ *   figures.
+ * - The "how it works" steps describe check_merchant's actual flow.
+ * - The integration code block is the real mcp-config.json shape for this
+ *   server's actual streamable-HTTP MCP endpoint (see
+ *   src/agentReadiness.ts's renderMcpServerCardJson, same origin/transport).
+ * - The "real merchants" section names Exa (api.exa.ai) and Vaaya
+ *   (vaaya.ai) at the user's explicit request ("we had in our dashboard
+ *   before... credible actors in the space") — both confirmed as real,
+ *   currently-indexed rows via a direct D1 query before writing this.
+ *   Deliberately shows only name/category/what-they-do, never their
+ *   computed tier/recommendation/signals: that's exactly the per-merchant
+ *   data the "Data access policy" lockdown (see README) retired
+ *   /merchant/* and /api/wallets for giving away free, and naming two
+ *   specific merchants would re-open that same leak for just those two if
+ *   their live verdict were shown here instead of behind the paid tool.
+ *
+ * Logo lockup (gradient-fill rounded square + "Gradient Decisions"
+ * wordmark) is new, matching the Figma nav exactly (gradient stops
+ * #fbcfe8→#fdba74, 6px corner radius) — deliberately not routed through
+ * src/brand.ts's existing renderMonogram/renderWordmark (the "GD"
+ * fade-letter treatment used on /privacy and the internal caller
+ * dashboard): that's a different, still-in-use mark, not being replaced
+ * site-wide by this task, just not reused here where the source design
+ * specifies something else.
  */
 import type { DashboardSummary, RecommendationCounts } from "./dashboard";
-import { BRAND_CSS, FAVICON_LINK, FONT_LINKS, renderMonogram, renderWordmark } from "./brand";
+import { FAVICON_LINK } from "./brand";
 
 function relativeTime(unixSeconds: number): string {
   const diffMin = Math.floor((Date.now() / 1000 - unixSeconds) / 60);
@@ -35,6 +59,80 @@ function relativeTime(unixSeconds: number): string {
 const pct = (n: number, denom: number) => (denom > 0 ? Math.round((n / denom) * 1000) / 10 : 0);
 const chainTotal = (c: RecommendationCounts) => c.proceed + c.caution + c.insufficientSignal;
 
+/** Figma nav lockup: gradient rounded square + wordmark text, not src/brand.ts's "GD" monogram — see file header. */
+function renderLandingLogo(idSuffix: string): string {
+  return `<span class="logo">
+    <svg width="28" height="28" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <linearGradient id="logoGrad-${idSuffix}" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#fbcfe8"/>
+          <stop offset="100%" stop-color="#fdba74"/>
+        </linearGradient>
+      </defs>
+      <rect width="28" height="28" rx="6" fill="url(#logoGrad-${idSuffix})"/>
+    </svg>
+    <span class="logo-word">Gradient Decisions</span>
+  </span>`;
+}
+
+const FIGMA_FONT_LINKS = `<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Gabarito:wght@600;700;800&family=Geist:wght@400;500;600&family=Geist+Mono:wght@500;600;700&display=swap" rel="stylesheet">`;
+
+const MCP_CONFIG_SNIPPET = `{
+  "mcpServers": {
+    "gradient-decisions": {
+      "url": "https://mcp.gradientdecisions.com/mcp",
+      "transport": "streamable-http"
+    }
+  }
+}`;
+
+interface WorkflowStep {
+  n: string;
+  icon: string;
+  title: string;
+  body: string;
+}
+
+const WORKFLOW_STEPS: WorkflowStep[] = [
+  { n: "01", icon: "💬", title: "Merchant Encountered", body: "Agent hits an x402 402 Payment Required challenge from a merchant it hasn't dealt with before." },
+  { n: "02", icon: "🔍", title: "check_merchant Call", body: "Agent calls check_merchant with the merchant's wallet address — $0.01, paid via x402 on Base." },
+  { n: "03", icon: "▦", title: "Signal Scoring", body: "Wallet age, unique payers, settlement volume, and price fairness vs. category peers, scored from real activity." },
+  { n: "04", icon: "✓", title: "Trust Recommendation", body: "Agent gets back PROCEED, CAUTION, or INSUFFICIENT SIGNAL, with the reasons behind it. Decision support, not a certification." },
+  { n: "05", icon: "🛒", title: "Agent Decides", body: "Agent uses the recommendation to decide whether to complete the real payment to the merchant." },
+];
+
+interface FeatureCard {
+  icon: string;
+  title: string;
+  body: string;
+}
+
+const FEATURE_CARDS: FeatureCard[] = [
+  { icon: "📊", title: "Real Observable Signals", body: "Wallet age, unique payer count, settlement volume, and price fairness against category peers — computed from real on-chain and x402 activity, not self-reported claims." },
+  { icon: "📋", title: "Pre-Payment Trust Scoring", body: "PROCEED / CAUTION / INSUFFICIENT SIGNAL, with the reasons behind each call — decision support for an agent's payment logic, not a certification." },
+  { icon: "🔌", title: "MCP-Native, With a Plain-HTTP Fallback", body: "Works out of the box as an MCP tool over streamable HTTP, or as a plain GET /check endpoint for HTTP-only x402 clients." },
+];
+
+interface IndexedMerchant {
+  name: string;
+  category: string;
+  domain: string;
+  blurb: string;
+}
+
+/**
+ * Real, currently-indexed rows (confirmed via a direct D1 query before
+ * writing this), shown as named examples of what's in the index — not as a
+ * live check_merchant result. See file header for why tier/recommendation
+ * is deliberately never rendered here.
+ */
+const INDEXED_MERCHANTS: IndexedMerchant[] = [
+  { name: "Exa", category: "Search API", domain: "api.exa.ai", blurb: "Search and content retrieval for agents. Indexed on Base." },
+  { name: "Vaaya", category: "Agent Tool Gateway", domain: "vaaya.ai", blurb: "Multi-tool x402 gateway — search, scraping, sandboxes, media generation. Indexed on Base." },
+];
+
 export function renderHomePlaceholderHtml(summary: DashboardSummary): string {
   const { counts, countsByChain, total, lastRefreshedAt } = summary;
   const baseTotal = chainTotal(countsByChain.base);
@@ -44,116 +142,332 @@ export function renderHomePlaceholderHtml(summary: DashboardSummary): string {
 <meta name="description" content="Pre-payment merchant trust checks for x402 agents, via the check_merchant MCP tool.">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 ${FAVICON_LINK}
-${FONT_LINKS}
+${FIGMA_FONT_LINKS}
 <style>
   :root {
-    --bg: #f7f7f8; --surface: #ffffff; --border: #e4e4e7; --text: #18181b; --text-dim: #6b7280; --accent: #4f46e5;
+    --bg: #ffffff; --bg-soft: #fff7f2; --bg-muted: #f9fafb; --surface: #ffffff; --border: #e5e7eb;
+    --text: #111827; --text-body: #374151; --text-dim: #6b7280;
+    --accent: #fdba74; --accent-ink: #7c2d12; --accent-tint: rgba(253,186,116,0.08);
+    --accent2: #fbcfe8; --accent2-ink: #9d174d; --accent2-tint: rgba(251,207,232,0.08);
     --proceed: #16a34a; --proceed-bg: #dcfce7; --caution: #b45309; --caution-bg: #fef3c7;
     --insufficient: #6b7280; --insufficient-bg: #f1f1f3;
-    --brand-gradient: linear-gradient(90deg, var(--accent) 0%, transparent 100%);
+    --r-sm: 6px; --r-md: 8px; --r-lg: 12px; --r-xl: 18px; --r-pill: 999px;
+    --shadow: 0 1px 2px rgba(17,24,39,.04);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #0b0b0d; --surface: #17171a; --border: #2a2a2e; --text: #f4f4f5; --text-dim: #9ca3af; --accent: #818cf8;
+      --bg: #0b0b0d; --bg-soft: #17110f; --bg-muted: #131316; --surface: #17171a; --border: #2a2a2e;
+      --text: #f4f4f5; --text-body: #d4d4d8; --text-dim: #9ca3af;
+      --accent: #fdba74; --accent-ink: #fdba74; --accent-tint: rgba(253,186,116,0.14);
+      --accent2: #fbcfe8; --accent2-ink: #f9a8d4; --accent2-tint: rgba(251,207,232,0.14);
       --proceed: #4ade80; --proceed-bg: #14532d; --caution: #fbbf24; --caution-bg: #78350f;
       --insufficient: #9ca3af; --insufficient-bg: #27272a;
-      --brand-gradient: linear-gradient(90deg, var(--accent) 0%, transparent 100%);
+      --shadow: 0 1px 2px rgba(0,0,0,.3);
     }
   }
   * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
   body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font-family: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
-    line-height: 1.6;
+    margin: 0; background: var(--bg); color: var(--text-body);
+    font-family: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    line-height: 1.6; font-size: 16px;
   }
-  ${BRAND_CSS}
-  .wrap { max-width: 640px; margin: 0 auto; padding: 3rem 1.5rem 4rem; }
-  .topbar { height: 3px; background: var(--brand-gradient); margin: -3rem -1.5rem 2rem; }
-  .brand-row { display: flex; align-items: center; gap: .6rem; margin-bottom: 1.25rem; }
-  .brand-row .brand-mark { width: 32px; }
-  h1 { font-size: 1.4rem; font-weight: 600; margin: 0; letter-spacing: -.01em; }
-  p { font-size: .95rem; color: var(--text-dim); }
-  .card {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-    padding: 1.25rem 1.4rem; margin: 1.5rem 0;
-  }
-  .card h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); margin: 0 0 .6rem; }
-  .card p { color: var(--text); margin: 0 0 .5rem; }
-  .card p:last-child { margin-bottom: 0; }
-  code { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: .15rem .4rem; font-size: .85rem; }
-  a { color: var(--accent); }
-  footer { margin-top: 2.5rem; color: var(--text-dim); font-size: .82rem; }
-  .footer-brand { opacity: .55; margin-bottom: .85rem; }
+  h1, h2, h3 { font-family: "Gabarito", -apple-system, sans-serif; color: var(--text); margin: 0; letter-spacing: -.01em; }
+  a { color: inherit; }
+  code, .mono { font-family: "Geist Mono", ui-monospace, SFMono-Regular, monospace; }
 
-  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: .65rem; margin: 1.5rem 0 1rem; }
-  .stat-card {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-    padding: .9rem 1rem; box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  .logo { display: inline-flex; align-items: center; gap: .55rem; text-decoration: none; }
+  .logo svg { flex-shrink: 0; }
+  .logo-word { font-family: "Gabarito", sans-serif; font-weight: 700; font-size: 1.05rem; color: var(--text); }
+
+  .tag {
+    display: inline-block; font-family: "Geist Mono", monospace; font-weight: 600; font-size: .7rem;
+    letter-spacing: .06em; text-transform: uppercase; padding: .35rem .85rem; border-radius: var(--r-pill);
+    border: 1px solid currentColor;
   }
-  .stat-card .n { font-size: 1.4rem; font-weight: 650; }
-  .stat-card .label { font-size: .74rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: .03em; }
-  .stat-card.proceed .n { color: var(--proceed); }
-  .stat-card.caution .n { color: var(--caution); }
-  .stat-card.insufficient .n { color: var(--insufficient); }
-  .bars { display: flex; height: 8px; border-radius: 6px; overflow: hidden; margin-bottom: 1.5rem; border: 1px solid var(--border); }
-  .bar-proceed { background: var(--proceed); }
-  .bar-caution { background: var(--caution); }
-  .bar-insufficient { background: var(--insufficient); }
-  .chain-breakdown { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .65rem; margin-bottom: .5rem; }
-  .chain-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: .8rem .95rem; }
-  .chain-card .chain-title { font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); margin-bottom: .35rem; }
-  .chain-card .chain-stats { display: flex; gap: .85rem; font-size: .82rem; }
-  .chain-card .chain-stats b { font-variant-numeric: tabular-nums; color: var(--proceed); }
-  .refreshed-note { font-size: .78rem; color: var(--text-dim); margin: -.25rem 0 0; }
+  .tag.peach { background: var(--accent-tint); color: var(--accent-ink); border-color: var(--accent); }
+  .tag.pink { background: var(--accent2-tint); color: var(--accent2-ink); border-color: var(--accent2); }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
+    font-family: "Gabarito", sans-serif; font-weight: 600; font-size: .92rem; text-decoration: none;
+    padding: .7rem 1.3rem; border-radius: var(--r-md); border: 1px solid transparent; cursor: pointer;
+  }
+  .btn-primary { background: var(--accent); color: #111827; }
+  .btn-secondary { background: transparent; color: var(--text); border-color: var(--border); }
+
+  section { padding: 4.5rem 1.5rem; }
+  .inner { max-width: 1120px; margin: 0 auto; }
+  .section-head { max-width: 640px; margin-bottom: 2.5rem; }
+  .section-head .tag { margin-bottom: 1rem; }
+  .section-head h2 { font-size: clamp(1.6rem, 3vw, 2.1rem); font-weight: 700; }
+  .section-head p { color: var(--text-dim); margin-top: .75rem; }
+
+  nav.topnav {
+    display: flex; align-items: center; justify-content: space-between; padding: 1.1rem 1.5rem;
+    border-bottom: 1px solid var(--border); background: var(--bg); position: sticky; top: 0; z-index: 10;
+  }
+  nav.topnav .navlinks { display: flex; gap: 1.75rem; font-size: .9rem; }
+  nav.topnav .navlinks a { color: var(--text-body); text-decoration: none; }
+  nav.topnav .navlinks a:hover { color: var(--text); }
+  nav.topnav .navright { display: flex; align-items: center; gap: 1.25rem; }
+  nav.topnav .navright > a.docslink { font-size: .9rem; color: var(--text-body); text-decoration: none; }
+  @media (max-width: 720px) { nav.topnav .navlinks { display: none; } }
+
+  .hero { text-align: center; padding-top: 5.5rem; padding-bottom: 3.5rem; }
+  .hero h1 { font-size: clamp(2.1rem, 5.5vw, 3.4rem); font-weight: 800; line-height: 1.08; max-width: 820px; margin: 1.25rem auto 1.25rem; }
+  .hero p.lede { max-width: 620px; margin: 0 auto 2rem; color: var(--text-dim); font-size: 1.05rem; }
+  .hero .cta-row { display: flex; gap: .85rem; justify-content: center; flex-wrap: wrap; }
+
+  .workflow-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1rem; }
+  .step-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 1.25rem; }
+  .step-card .step-n { font-family: "Geist Mono", monospace; font-size: .7rem; font-weight: 700; color: var(--text-dim); letter-spacing: .05em; }
+  .step-card .step-icon { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: var(--r-sm); background: var(--accent2-tint); font-size: 1rem; margin: .5rem 0 .75rem; }
+  .step-card h3 { font-size: .98rem; font-weight: 700; margin-bottom: .4rem; }
+  .step-card p { font-size: .84rem; color: var(--text-dim); margin: 0; }
+  .workflow-head-flex { display: flex; justify-content: space-between; gap: 2rem; flex-wrap: wrap; align-items: flex-end; margin-bottom: 2rem; }
+  .workflow-head-flex .section-head { margin-bottom: 0; }
+  .workflow-head-flex .side-note { max-width: 320px; color: var(--text-dim); font-size: .9rem; }
+
+  .features-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.25rem; }
+  .feature-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl); padding: 1.75rem; }
+  .feature-card .f-icon { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border-radius: var(--r-md); background: var(--accent-tint); font-size: 1.3rem; margin-bottom: 1rem; }
+  .feature-card h3 { font-size: 1.05rem; font-weight: 700; margin-bottom: .5rem; }
+  .feature-card p { font-size: .88rem; color: var(--text-dim); margin: 0; }
+
+  .integrate-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2.5rem; align-items: center; }
+  @media (max-width: 860px) { .integrate-grid { grid-template-columns: 1fr; } }
+  .integrate-copy ul { list-style: none; padding: 0; margin: 1.25rem 0 0; display: flex; flex-direction: column; gap: .55rem; }
+  .integrate-copy li { font-size: .88rem; color: var(--text-body); display: flex; gap: .5rem; align-items: baseline; }
+  .integrate-copy li::before { content: "✓"; color: var(--proceed); font-weight: 700; }
+  .code-window { background: var(--bg-muted); border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden; }
+  .code-window .code-titlebar { display: flex; align-items: center; justify-content: space-between; padding: .6rem .9rem; border-bottom: 1px solid var(--border); }
+  .code-window .dots { display: flex; gap: .35rem; }
+  .code-window .dots span { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .code-window .dots span:nth-child(1) { background: #ef4444; }
+  .code-window .dots span:nth-child(2) { background: #f59e0b; }
+  .code-window .dots span:nth-child(3) { background: #16a34a; }
+  .code-window .filename { font-family: "Geist Mono", monospace; font-size: .75rem; color: var(--text-dim); }
+  .code-window pre { margin: 0; padding: 1.1rem 1.2rem; font-family: "Geist Mono", monospace; font-size: .8rem; line-height: 1.6; overflow-x: auto; color: var(--text-body); }
+
+  .stats-band { background: var(--bg-muted); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 3rem 1.5rem; }
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1.5rem; text-align: center; }
+  .stats-grid .n { font-family: "Gabarito", sans-serif; font-size: clamp(1.6rem, 3vw, 2.2rem); font-weight: 800; color: var(--accent2-ink); }
+  .stats-grid .n.proceed { color: var(--proceed); }
+  .stats-grid .n.caution { color: var(--caution); }
+  .stats-grid .n.insufficient { color: var(--insufficient); }
+  .stats-grid .label { font-size: .78rem; color: var(--text-dim); margin-top: .3rem; }
+  .chain-row { display: flex; gap: 1rem; justify-content: center; margin-top: 2rem; flex-wrap: wrap; }
+  .chain-pill { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-pill); padding: .5rem 1.1rem; font-size: .82rem; color: var(--text-body); }
+  .chain-pill b { color: var(--text); }
+  .refreshed-note { text-align: center; font-size: .78rem; color: var(--text-dim); margin-top: 1.25rem; }
+
+  .merchants-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.25rem; }
+  .merchant-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 1.5rem; }
+  .merchant-card .m-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: .6rem; }
+  .merchant-card h3 { font-size: 1.05rem; font-weight: 700; }
+  .merchant-card .m-cat { font-family: "Geist Mono", monospace; font-size: .68rem; text-transform: uppercase; letter-spacing: .05em; color: var(--accent-ink); background: var(--accent-tint); border-radius: var(--r-sm); padding: .2rem .5rem; }
+  .merchant-card .m-domain { font-family: "Geist Mono", monospace; font-size: .78rem; color: var(--text-dim); margin-bottom: .5rem; display: block; }
+  .merchant-card p { font-size: .86rem; color: var(--text-dim); margin: 0; }
+  .merchants-note { font-size: .8rem; color: var(--text-dim); margin-top: 1.5rem; max-width: 70ch; }
+
+  .cta-section { text-align: center; background: var(--bg-soft); }
+  .cta-section h2 { font-size: clamp(1.7rem, 4vw, 2.4rem); font-weight: 800; max-width: 640px; margin: 1rem auto 1rem; }
+  .cta-section p { color: var(--text-dim); max-width: 520px; margin: 0 auto 2rem; }
+  .cta-section .cta-row { display: flex; gap: .85rem; justify-content: center; flex-wrap: wrap; }
+
+  footer.sitefoot { border-top: 1px solid var(--border); padding: 3rem 1.5rem 2rem; }
+  footer.sitefoot .foot-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 2.5rem; }
+  @media (max-width: 720px) { footer.sitefoot .foot-grid { grid-template-columns: 1fr; } }
+  footer.sitefoot .foot-brand p { font-size: .88rem; color: var(--text-dim); max-width: 320px; margin-top: .85rem; }
+  footer.sitefoot .foot-col h4 { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); margin-bottom: .85rem; font-weight: 600; }
+  footer.sitefoot .foot-col ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .55rem; }
+  footer.sitefoot .foot-col a { font-size: .86rem; color: var(--text-body); text-decoration: none; }
+  footer.sitefoot .foot-col a:hover { color: var(--text); }
+  footer.sitefoot .foot-bottom { border-top: 1px solid var(--border); margin-top: 2.5rem; padding-top: 1.25rem; font-size: .78rem; color: var(--text-dim); display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem; }
+  footer.sitefoot .foot-bottom a { color: var(--text-dim); }
 </style>
-<div class="topbar"></div>
-<div class="wrap">
-  <div class="brand-row">${renderMonogram("home-header", 32)}<h1>x402 Merchant Check</h1></div>
-  <p>
-    Pre-payment merchant intelligence for autonomous agents making x402 payments:
-    before paying an unfamiliar merchant, an agent calls <code>check_merchant</code> and gets back a
-    trust recommendation built from that merchant's observable on-chain and x402 activity.
-  </p>
 
-  <div class="stats">
-    <div class="stat-card"><div class="n">${total.toLocaleString()}</div><div class="label">Merchants indexed</div></div>
-    <div class="stat-card proceed"><div class="n">${counts.proceed}</div><div class="label">Proceed (${pct(counts.proceed, total)}%)</div></div>
-    <div class="stat-card caution"><div class="n">${counts.caution}</div><div class="label">Caution (${pct(counts.caution, total)}%)</div></div>
-    <div class="stat-card insufficient"><div class="n">${counts.insufficientSignal}</div><div class="label">Insufficient signal (${pct(counts.insufficientSignal, total)}%)</div></div>
+<nav class="topnav">
+  <a href="/" style="text-decoration:none">${renderLandingLogo("nav")}</a>
+  <div class="navlinks">
+    <a href="#features">Features</a>
+    <a href="#how-it-works">How It Works</a>
+    <a href="/auth.md">Docs</a>
   </div>
-  <div class="bars">
-    <div class="bar-proceed" style="width:${pct(counts.proceed, total)}%"></div>
-    <div class="bar-caution" style="width:${pct(counts.caution, total)}%"></div>
-    <div class="bar-insufficient" style="width:${pct(counts.insufficientSignal, total)}%"></div>
+  <div class="navright">
+    <a class="docslink" href="/auth.md">Docs</a>
+    <a class="btn btn-primary" href="#integrate">Get Started</a>
   </div>
+</nav>
 
-  <div class="chain-breakdown">
-    <div class="chain-card">
-      <div class="chain-title">Base</div>
-      <div class="chain-stats">
-        <span>${baseTotal.toLocaleString()} merchants</span>
-        <span><b>${pct(countsByChain.base.proceed, baseTotal)}%</b> proceed</span>
-      </div>
-    </div>
-    <div class="chain-card">
-      <div class="chain-title">Solana</div>
-      <div class="chain-stats">
-        <span>${solanaTotal.toLocaleString()} merchants</span>
-        <span><b>${pct(countsByChain.solana.proceed, solanaTotal)}%</b> proceed</span>
-      </div>
+<section class="hero">
+  <div class="inner">
+    <span class="tag peach">PRE-PAYMENT TRUST LAYER FOR X402</span>
+    <h1>The Last Check Before Your Agent Pays.</h1>
+    <p class="lede">
+      <code class="mono">check_merchant</code> gives autonomous agents a trust recommendation — PROCEED, CAUTION, or
+      INSUFFICIENT SIGNAL — built from a merchant's observable on-chain and x402 settlement history, before it
+      commits to a real payment.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="#integrate">Start Integrating</a>
+      <a class="btn btn-secondary" href="/auth.md">View Docs</a>
     </div>
   </div>
-  <p class="refreshed-note">Last refreshed ${lastRefreshedAt ? relativeTime(lastRefreshedAt) : "never"}. Aggregate counts only — per-merchant results are available via the paid <code>check_merchant</code> MCP tool.</p>
+</section>
 
-  <div class="card">
-    <h2>For agents</h2>
-    <p>MCP endpoint: <code>mcp.gradientdecisions.com/mcp</code></p>
-    <p>Tool: <code>check_merchant</code> — $0.01 per query, paid via x402 on Base mainnet.</p>
+<section id="how-it-works">
+  <div class="inner">
+    <div class="workflow-head-flex">
+      <div class="section-head">
+        <span class="tag pink">END-TO-END VALIDATION</span>
+        <h2>How check_merchant Fits Into Agentic Commerce</h2>
+      </div>
+      <p class="side-note">Agents are autonomous but still need a trust check at the moment of payment. Here's where Gradient Decisions sits in that loop.</p>
+    </div>
+    <div class="workflow-grid">
+      ${WORKFLOW_STEPS.map(
+        (s) => `<div class="step-card">
+        <span class="step-n">STEP ${s.n}</span>
+        <div class="step-icon">${s.icon}</div>
+        <h3>${s.title}</h3>
+        <p>${s.body}</p>
+      </div>`,
+      ).join("\n")}
+    </div>
   </div>
+</section>
 
-  <footer>
-    <div class="footer-brand">${renderWordmark("home-footer", 120)}</div>
-    <a href="/privacy">Privacy policy</a>.
-  </footer>
-</div>`;
+<section id="features">
+  <div class="inner">
+    <div class="section-head">
+      <span class="tag pink">ENGINEERED FOR AGENTS</span>
+      <h2>Built Specifically For Autonomous Commerce</h2>
+    </div>
+    <div class="features-grid">
+      ${FEATURE_CARDS.map(
+        (f) => `<div class="feature-card">
+        <div class="f-icon">${f.icon}</div>
+        <h3>${f.title}</h3>
+        <p>${f.body}</p>
+      </div>`,
+      ).join("\n")}
+    </div>
+  </div>
+</section>
+
+<section id="integrate">
+  <div class="inner">
+    <div class="integrate-grid">
+      <div class="integrate-copy">
+        <span class="tag pink">DEVELOPER FIRST</span>
+        <h2 style="margin-top:1rem;font-size:clamp(1.5rem,3vw,2rem);font-weight:700;">Integrate in Minutes</h2>
+        <p style="color:var(--text-dim);margin-top:.85rem;">
+          Gradient Decisions works natively via MCP over streamable HTTP. Add it as a remote server and your agent
+          can call <code class="mono">check_merchant</code> directly — no API keys, no accounts, every call
+          authenticated by its own x402 payment.
+        </p>
+        <ul>
+          <li>No accounts or API keys — payment is the auth</li>
+          <li>$0.01 USDC per check, via x402 on Base mainnet</li>
+          <li>Same tool available as plain HTTP at <code class="mono">GET /check</code></li>
+        </ul>
+      </div>
+      <div class="code-window">
+        <div class="code-titlebar">
+          <div class="dots"><span></span><span></span><span></span></div>
+          <span class="filename">mcp-config.json</span>
+        </div>
+        <pre>${MCP_CONFIG_SNIPPET}</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="stats-band">
+  <div class="inner">
+    <div class="stats-grid">
+      <div><div class="n">${total.toLocaleString()}</div><div class="label">Merchants indexed</div></div>
+      <div><div class="n proceed">${pct(counts.proceed, total)}%</div><div class="label">Proceed (${counts.proceed})</div></div>
+      <div><div class="n caution">${pct(counts.caution, total)}%</div><div class="label">Caution (${counts.caution})</div></div>
+      <div><div class="n insufficient">${pct(counts.insufficientSignal, total)}%</div><div class="label">Insufficient signal (${counts.insufficientSignal})</div></div>
+    </div>
+    <div class="chain-row">
+      <span class="chain-pill"><b>${baseTotal.toLocaleString()}</b> merchants on Base · <b>${pct(countsByChain.base.proceed, baseTotal)}%</b> proceed</span>
+      <span class="chain-pill"><b>${solanaTotal.toLocaleString()}</b> merchants on Solana · <b>${pct(countsByChain.solana.proceed, solanaTotal)}%</b> proceed</span>
+    </div>
+    <p class="refreshed-note">Last refreshed ${lastRefreshedAt ? relativeTime(lastRefreshedAt) : "never"}. Aggregate counts only — per-merchant results are available via the paid <code class="mono">check_merchant</code> tool.</p>
+  </div>
+</div>
+
+<section>
+  <div class="inner">
+    <div class="section-head">
+      <span class="tag peach">INDEXED X402 MERCHANTS</span>
+      <h2>Real Merchants In Our Index</h2>
+    </div>
+    <div class="merchants-grid">
+      ${INDEXED_MERCHANTS.map(
+        (m) => `<div class="merchant-card">
+        <div class="m-top"><h3>${m.name}</h3><span class="m-cat">${m.category}</span></div>
+        <code class="m-domain">${m.domain}</code>
+        <p>${m.blurb}</p>
+      </div>`,
+      ).join("\n")}
+    </div>
+    <p class="merchants-note">Trust tier and signals are the paid part of the product — shown to agents via <code class="mono">check_merchant</code>, not published here for any specific merchant.</p>
+  </div>
+</section>
+
+<section class="cta-section">
+  <div class="inner">
+    <span class="tag pink">START INTEGRATING</span>
+    <h2>Give Your Agent A Reason To Trust The Payment</h2>
+    <p>Add Gradient Decisions to your agent's MCP config in under five minutes. Every check is $0.01, paid the same way as the payment it's protecting.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="#integrate">Integrate MCP Server Now</a>
+      <a class="btn btn-secondary" href="/auth.md">Read the Docs</a>
+    </div>
+  </div>
+</section>
+
+<footer class="sitefoot">
+  <div class="inner">
+    <div class="foot-grid">
+      <div class="foot-brand">
+        ${renderLandingLogo("foot")}
+        <p>Pre-payment trust checks for autonomous agent commerce via x402. Deciding whether to pay, before you pay.</p>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1.5rem;">
+        <div class="foot-col">
+          <h4>Product</h4>
+          <ul>
+            <li><a href="#features">Features</a></li>
+            <li><a href="#how-it-works">How It Works</a></li>
+            <li><a href="#integrate">Integrate</a></li>
+          </ul>
+        </div>
+        <div class="foot-col">
+          <h4>Developers</h4>
+          <ul>
+            <li><a href="/auth.md">Docs</a></li>
+            <li><a href="https://mcp.gradientdecisions.com/mcp">MCP Endpoint</a></li>
+            <li><a href="/.well-known/api-catalog">API Catalog</a></li>
+          </ul>
+        </div>
+        <div class="foot-col">
+          <h4>Legal</h4>
+          <ul>
+            <li><a href="/privacy">Privacy Policy</a></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2026 Gradient Decisions. Built for autonomous agent commerce.</span>
+      <a href="/privacy">Privacy policy</a>
+    </div>
+  </div>
+</footer>`;
 }
