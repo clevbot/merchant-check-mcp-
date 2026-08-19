@@ -15,6 +15,7 @@ import { runCategorization } from "./categorize";
 import { getCallerAnalytics, renderCallerDashboardHtml, callerAnalyticsToJson } from "./callerDashboard";
 import { renderPrivacyPolicyHtml } from "./privacy";
 import { renderHomePlaceholderHtml } from "./homePlaceholder";
+import { getDashboardSummary } from "./dashboard";
 
 /**
  * Payment stack: @x402/core + @x402/evm + @x402/mcp — the official Coinbase/
@@ -446,12 +447,17 @@ export default {
     // down — see "Data access policy" in README — because that gave any
     // agent (or script) the exact same read `check_merchant` charges
     // $0.01/query for, completely free, which undercut the paid product
-    // this whole system exists to sell. Now a static placeholder with no
-    // D1 query and nothing to leak; the real redesigned dashboard is a
-    // separate, later task built from Figma mockups, not rebuilt here.
+    // this whole system exists to sell. Aggregate-only summary stats added
+    // back the same day at the user's request (total merchants, PROCEED/
+    // CAUTION/INSUFFICIENT_SIGNAL counts, per-chain breakdown) — safe to
+    // publish since getDashboardSummary() never pulls per-merchant data out
+    // of D1 in the first place, not just withholds it at render time. The
+    // real redesigned per-merchant dashboard is still a separate, later
+    // task built from Figma mockups, not rebuilt here.
     if (url.pathname === "/" || url.pathname === "/dashboard") {
-      return new Response(renderHomePlaceholderHtml(), {
-        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=300" },
+      const summary = await getDashboardSummary(env);
+      return new Response(renderHomePlaceholderHtml(summary), {
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=60" },
       });
     }
     // 2026-08-19: retired, same reasoning as the homepage above — this was

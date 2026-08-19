@@ -47,7 +47,7 @@ interface DashboardRow extends RawDashboardRow {
   priceFairness: PriceFairness;
 }
 
-type RecommendationCounts = { proceed: number; caution: number; insufficientSignal: number };
+export type RecommendationCounts = { proceed: number; caution: number; insufficientSignal: number };
 
 interface DashboardData {
   rows: DashboardRow[];
@@ -151,6 +151,64 @@ export function dashboardDataToJson(data: DashboardData): Response {
   return new Response(JSON.stringify(data), {
     headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=60" },
   });
+}
+
+export interface DashboardSummary {
+  counts: RecommendationCounts;
+  countsByChain: { base: RecommendationCounts; solana: RecommendationCounts };
+  total: number;
+  lastRefreshedAt: number | null;
+}
+
+/**
+ * Aggregate-only counterpart to getDashboardData (2026-08-19) — added back
+ * to the public homepage after the data-access lockdown (see README "Data
+ * access policy"), scoped deliberately narrow: total merchants indexed,
+ * proceed/caution/insufficient-signal counts, and the same split by chain.
+ * No wallet address, reasons, platforms, category, or pricing — the exact
+ * fields that made the old dashboard/`/api/wallets` a free substitute for
+ * the paid check_merchant tool.
+ *
+ * Not just "the same query with fewer fields rendered" — the SQL itself
+ * only ever selects (chain, tier, total_tx_count), so no merchant-
+ * identifying data is pulled into Worker memory in the first place, not
+ * merely withheld at render time. Recommendation is still derived via
+ * src/tool.ts's own deriveRecommendation/MIN_TX_FOR_CONFIDENCE rather than
+ * reimplementing that threshold logic in SQL, so this can never drift out
+ * of sync with what check_merchant or getDashboardData would compute for
+ * the same row.
+ */
+export async function getDashboardSummary(env: Env): Promise<DashboardSummary> {
+  const { results } = await env.DB.prepare(
+    `SELECT chain, tier, total_tx_count, refreshed_at
+     FROM merchant_signals
+     WHERE is_demo = 0 AND network IN (?, ?)`,
+  )
+    .bind(BASE_MAINNET_NETWORK, SOLANA_MAINNET_NETWORK)
+    .all<{ chain: string; tier: string | null; total_tx_count: number; refreshed_at: number }>();
+
+  const counts: RecommendationCounts = { proceed: 0, caution: 0, insufficientSignal: 0 };
+  const countsByChain = {
+    base: { proceed: 0, caution: 0, insufficientSignal: 0 },
+    solana: { proceed: 0, caution: 0, insufficientSignal: 0 },
+  };
+  let lastRefreshedAt: number | null = null;
+
+  for (const row of results) {
+    const dataSufficiency: DataSufficiency = row.total_tx_count < MIN_TX_FOR_CONFIDENCE ? "INSUFFICIENT" : "SUFFICIENT";
+    const tier = (row.tier === "trusted" || row.tier === "caution" || row.tier === "avoid" ? row.tier : "caution") as Tier;
+    const recommendation = deriveRecommendation(dataSufficiency, tier);
+    const key = recommendation === "PROCEED" ? "proceed" : recommendation === "CAUTION" ? "caution" : "insufficientSignal";
+    counts[key]++;
+    if (row.chain === "base" || row.chain === "solana") {
+      countsByChain[row.chain][key]++;
+    }
+    if (lastRefreshedAt === null || row.refreshed_at > lastRefreshedAt) {
+      lastRefreshedAt = row.refreshed_at;
+    }
+  }
+
+  return { counts, countsByChain, total: results.length, lastRefreshedAt };
 }
 
 /** Exported so src/callerDashboard.ts (internal admin dashboard) reuses the same escaping instead of a second copy. */
