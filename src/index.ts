@@ -16,7 +16,17 @@ import { getCallerAnalytics, renderCallerDashboardHtml, callerAnalyticsToJson } 
 import { renderPrivacyPolicyHtml } from "./privacy";
 import { renderHomePlaceholderHtml } from "./homePlaceholder";
 import { getDashboardSummary } from "./dashboard";
-import { ROBOTS_TXT, renderHomeMarkdown, renderSitemapXml, wantsMarkdown } from "./agentReadiness";
+import {
+  API_CATALOG_LINK_HEADER,
+  ROBOTS_TXT,
+  SAMPLE_CHECK_MERCHANT_INPUT,
+  SAMPLE_CHECK_MERCHANT_OUTPUT,
+  renderApiCatalogJson,
+  renderAuthMd,
+  renderHomeMarkdown,
+  renderSitemapXml,
+  wantsMarkdown,
+} from "./agentReadiness";
 
 /**
  * Payment stack: @x402/core + @x402/evm + @x402/mcp — the official Coinbase/
@@ -191,29 +201,13 @@ function createServer(env: Env, accepts: PaymentRequirements[], resourceServer: 
         },
         required: ["merchant_wallet_address"],
       },
-      example: { merchant_wallet_address: "0xffc458db291b4abce020fe3de4f91f2770e537b1", price: 0.05 },
+      // Same canonical example src/agentReadiness.ts's auth.md shows —
+      // single source of truth (see that file's own comment) so this
+      // Bazaar-facing sample and the human/agent-facing auth.md page can
+      // never drift into showing different "sample" shapes.
+      example: SAMPLE_CHECK_MERCHANT_INPUT,
       output: {
-        example: {
-          merchant: "0xffc458db291b4abce020fe3de4f91f2770e537b1",
-          network: "eip155:8453",
-          recommendation: "PROCEED",
-          trust_tier: "TRUSTED",
-          confidence: "HIGH",
-          data_sufficiency: "SUFFICIENT",
-          signals: {
-            merchant_age_days: 184,
-            unique_payers: 51,
-            total_tx_count: 89635,
-            payer_concentration: "LOW",
-          },
-          risk_flags: [],
-          reasons: ["Consistent signals across wallet age, payer diversity, and settlement history"],
-          price_fairness: "fair",
-          pricing: { advertised_prices_atomic: [50000], fairness_vs_category: "fair" },
-          category: "data_api",
-          chain: "base",
-          platforms: [{ url: "https://api.example.com/v1/weather", serviceName: "Weather API" }],
-        },
+        example: SAMPLE_CHECK_MERCHANT_OUTPUT,
         schema: {
           type: "object",
           properties: {
@@ -462,13 +456,28 @@ export default {
       // "Markdown for Agents" feature keys off, implemented here for free.
       // Vary: Accept so any downstream/edge cache keys on it and never
       // serves the wrong format to the next requester.
+      // Link header (RFC 8288) pointing at the api-catalog below — the
+      // "Link Headers" Technical Groundwork quick win. Added on every
+      // variant of the homepage response, not just HTML, so it's visible
+      // regardless of which content-negotiated version an agent requests.
+      const linkHeader = API_CATALOG_LINK_HEADER;
       if (wantsMarkdown(request)) {
         return new Response(renderHomeMarkdown(summary), {
-          headers: { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "public, max-age=60", Vary: "Accept" },
+          headers: {
+            "Content-Type": "text/markdown; charset=utf-8",
+            "Cache-Control": "public, max-age=60",
+            Vary: "Accept",
+            Link: linkHeader,
+          },
         });
       }
       return new Response(renderHomePlaceholderHtml(summary), {
-        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=60", Vary: "Accept" },
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "public, max-age=60",
+          Vary: "Accept",
+          Link: linkHeader,
+        },
       });
     }
     // "Agent Readiness" quick wins (2026-08-19) — robots.txt (with explicit
@@ -483,6 +492,22 @@ export default {
     if (url.pathname === "/sitemap.xml") {
       return new Response(renderSitemapXml(), {
         headers: { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=3600" },
+      });
+    }
+    // "Technical Groundwork" quick wins (2026-08-19): a real RFC 9727
+    // api-catalog pointing at the MCP endpoint, and auth.md explaining that
+    // payment (x402) *is* the auth mechanism here — plus the same canonical
+    // sample output declareDiscoveryExtension above already shows, so an
+    // agent can see the shape of a result without spending anything, while
+    // real results still only ever come back through an actual paid call.
+    if (url.pathname === "/.well-known/api-catalog") {
+      return new Response(renderApiCatalogJson(), {
+        headers: { "Content-Type": "application/linkset+json", "Cache-Control": "public, max-age=3600" },
+      });
+    }
+    if (url.pathname === "/auth.md") {
+      return new Response(renderAuthMd(), {
+        headers: { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "public, max-age=3600" },
       });
     }
     // 2026-08-19: retired, same reasoning as the homepage above — this was

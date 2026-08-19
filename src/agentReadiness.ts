@@ -18,8 +18,48 @@
  * Content-Signal line below — see that constant's own comment.
  */
 import type { DashboardSummary, RecommendationCounts } from "./dashboard";
+import type { CheckMerchantOutput } from "./types";
 
 const SITE_ORIGIN = "https://gradientdecisions.com";
+const MCP_ORIGIN = "https://mcp.gradientdecisions.com";
+
+/**
+ * Canonical example check_merchant call/response (2026-08-19) — single
+ * source of truth, imported both here (auth.md) and by src/index.ts's
+ * declareDiscoveryExtension `example`/`output.example` fields, which used
+ * to carry their own separately-typed-out copy of the same object. Not
+ * real data: the merchant address, counts, and platform URL are all
+ * illustrative — matches this project's standing rule (see README "Data
+ * access policy") that nothing real is given away for free, but a sample
+ * of the *shape* of what $0.01 buys is fair game and actively useful for
+ * agent integration.
+ */
+export const SAMPLE_CHECK_MERCHANT_INPUT = {
+  merchant_wallet_address: "0xffc458db291b4abce020fe3de4f91f2770e537b1",
+  price: 0.05,
+};
+
+export const SAMPLE_CHECK_MERCHANT_OUTPUT: CheckMerchantOutput = {
+  merchant: "0xffc458db291b4abce020fe3de4f91f2770e537b1",
+  network: "eip155:8453",
+  recommendation: "PROCEED",
+  trust_tier: "TRUSTED",
+  confidence: "HIGH",
+  data_sufficiency: "SUFFICIENT",
+  signals: {
+    merchant_age_days: 184,
+    unique_payers: 51,
+    total_tx_count: 89635,
+    payer_concentration: "LOW",
+  },
+  risk_flags: [],
+  reasons: ["Consistent signals across wallet age, payer diversity, and settlement history"],
+  price_fairness: "fair",
+  pricing: { advertised_prices_atomic: [50000], fairness_vs_category: "fair" },
+  category: "data_api",
+  chain: "base",
+  platforms: [{ url: "https://api.example.com/v1/weather", serviceName: "Weather API" }],
+};
 
 /**
  * User-agent tokens: only the well-established, stably-documented ones are
@@ -82,6 +122,85 @@ export function renderSitemapXml(): string {
 export function wantsMarkdown(request: Request): boolean {
   const accept = request.headers.get("Accept") ?? "";
   return accept.includes("text/markdown");
+}
+
+/**
+ * `/.well-known/api-catalog` (RFC 9727) — "Technical Groundwork" quick win
+ * (2026-08-19). A linkset (RFC 9264) document, media type
+ * application/linkset+json, pointing agents at the one real machine
+ * interface this site has: the MCP endpoint, described by auth.md (how to
+ * pay/authenticate) below. Deliberately doesn't invent an OpenAPI spec URL
+ * that doesn't exist — check_merchant is an MCP tool, not a REST API, so
+ * `describedby` points to prose (auth.md) rather than a fabricated schema
+ * document.
+ */
+export function renderApiCatalogJson(): string {
+  const catalog = {
+    linkset: [
+      {
+        anchor: `${MCP_ORIGIN}/mcp`,
+        describedby: [
+          {
+            href: `${SITE_ORIGIN}/auth.md`,
+            type: "text/markdown",
+            title: "check_merchant MCP tool: payment/auth flow and sample output",
+          },
+        ],
+      },
+    ],
+  };
+  return JSON.stringify(catalog, null, 2);
+}
+
+/** Value for the homepage's Link response header (RFC 8288) — the "Link Headers" quick win, pointing agents at the api-catalog above without requiring them to already know it exists. */
+export const API_CATALOG_LINK_HEADER = `</.well-known/api-catalog>; rel="api-catalog"`;
+
+/**
+ * `/auth.md` — "Technical Groundwork" quick win. Honest about what's
+ * actually true here: no accounts, no API keys, no OAuth — x402 payment
+ * *is* the auth mechanism, per-call. Includes the canonical sample output
+ * above so an agent (or a person) can see the exact shape of what $0.01
+ * buys without needing to spend it first, without that sample being real,
+ * queryable merchant data — see README "Data access policy" for why real
+ * data only ever comes back through an actual paid call.
+ */
+export function renderAuthMd(): string {
+  return `# Authentication
+
+x402 Merchant Check has no accounts, no API keys, and no OAuth. There is nothing to register or log into.
+
+Every call to the \`check_merchant\` MCP tool is authenticated by payment itself, per the [x402 protocol](https://x402.org): each request is paid for individually, on-chain, in USDC on Base mainnet. There's no session and no token beyond the payment itself.
+
+## How it works
+
+1. Call \`check_merchant\` on \`${MCP_ORIGIN}/mcp\` with a \`merchant_wallet_address\`.
+2. Without payment attached, the tool returns an x402 \`402 Payment Required\` challenge (an \`accepts[]\` array with \`scheme\`, \`network\`, \`amount\`, \`asset\`, \`payTo\`).
+3. Build and sign a payment matching those exact terms, and retry the same call with it attached. See [x402.org](https://x402.org) or the [@x402/mcp](https://www.npmjs.com/package/@x402/mcp) client library for the mechanics — this server uses the official x402/MCP stack on the server side, not a custom variant.
+4. On a valid payment, the tool settles it and returns the real result.
+
+Price: **$0.01 USDC per call**, paid via x402 on Base mainnet (\`eip155:8453\`).
+
+## Sample call and output
+
+Illustrative only — not a live query, not real merchant data. Real results are only ever returned for an actual paid call.
+
+Input:
+
+\`\`\`json
+${JSON.stringify(SAMPLE_CHECK_MERCHANT_INPUT, null, 2)}
+\`\`\`
+
+Output:
+
+\`\`\`json
+${JSON.stringify(SAMPLE_CHECK_MERCHANT_OUTPUT, null, 2)}
+\`\`\`
+
+## Machine-readable discovery
+
+- API catalog: [\`/.well-known/api-catalog\`](${SITE_ORIGIN}/.well-known/api-catalog)
+- Aggregate stats (no auth needed): [\`${SITE_ORIGIN}/\`](${SITE_ORIGIN}/) (send \`Accept: text/markdown\` for a plain-text version)
+`;
 }
 
 function pct(n: number, denom: number): number {
