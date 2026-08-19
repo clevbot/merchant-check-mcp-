@@ -125,7 +125,7 @@ export function renderMcpServerCardJson(): string {
     links: {
       apiCatalog: `${SITE_ORIGIN}/.well-known/api-catalog`,
       auth: `${SITE_ORIGIN}/auth.md`,
-      methodology: `${SITE_ORIGIN}/methodology.md`,
+      methodology: `${SITE_ORIGIN}/methodology`,
       privacy: `${SITE_ORIGIN}/privacy`,
       stats: SITE_ORIGIN,
     },
@@ -239,7 +239,7 @@ export const API_CATALOG_LINK_HEADER = `</.well-known/api-catalog>; rel="api-cat
 export function renderAuthMd(): string {
   return `# Auth.md — Authentication
 
-Payment/protocol mechanics only — for how the trust score itself is computed, see [methodology.md](${SITE_ORIGIN}/methodology.md).
+Payment/protocol mechanics only — for how the trust score itself is computed, see [methodology](${SITE_ORIGIN}/methodology).
 
 x402 Merchant Check has no accounts, no API keys, and no OAuth. There is nothing to register or log into.
 
@@ -282,15 +282,23 @@ ${JSON.stringify(SAMPLE_CHECK_MERCHANT_OUTPUT, null, 2)}
 }
 
 /**
- * `/methodology.md` (2026-08-19) — added after a direct product question:
- * the landing page's "Read the Docs" button pointed at auth.md, which only
- * explains x402 payment mechanics (how to call/pay/retry). It never
- * explained the actual thing a human clicking "Docs" from a landing page
- * wants to understand first — why the tier/recommendation should be
- * trusted at all. This is that doc: a prose walkthrough of scoring, aimed
- * at a human evaluator, not an integrating agent. auth.md stays exactly as
+ * Markdown source of truth for the scoring methodology explainer — added
+ * after a direct product question: the landing page's "Read the Docs"
+ * button pointed at auth.md, which only explains x402 payment mechanics
+ * (how to call/pay/retry). It never explained the actual thing a human
+ * clicking "Docs" from a landing page wants to understand first — why the
+ * tier/recommendation should be trusted at all. auth.md stays exactly as
  * it was (protocol mechanics, agent-facing) — this doesn't replace it,
  * they're cross-linked.
+ *
+ * Served two ways at GET /methodology (see src/index.ts): this function's
+ * output for `Accept: text/markdown` requests, and src/methodology.ts's
+ * renderMethodologyHtml() — the same visual system as the homepage, not a
+ * plain markdown dump — for everyone else. First built markdown-only; the
+ * HTML page came from direct follow-up feedback ("just make the
+ * methodology another webpage with the same theme"). Keep this function's
+ * prose and that file's copy in sync by hand — there's no shared-constant
+ * mechanism forcing them to match.
  *
  * Every number/threshold/signal description below is pulled directly from
  * src/scoring.ts and src/tool.ts, not paraphrased from memory — including

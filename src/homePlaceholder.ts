@@ -60,8 +60,15 @@ function relativeTime(unixSeconds: number): string {
 const pct = (n: number, denom: number) => (denom > 0 ? Math.round((n / denom) * 1000) / 10 : 0);
 const chainTotal = (c: RecommendationCounts) => c.proceed + c.caution + c.insufficientSignal;
 
-/** Figma nav lockup: gradient rounded square + wordmark text, not src/brand.ts's "GD" monogram — see file header. */
-function renderLandingLogo(idSuffix: string): string {
+/**
+ * Figma nav lockup: gradient rounded square + wordmark text, not
+ * src/brand.ts's "GD" monogram — see file header. Exported (along with
+ * FIGMA_FONT_LINKS, LANDING_STYLES, renderLandingNav, renderLandingFooter
+ * below) so any other page built in this visual system — see
+ * src/methodology.ts — shares the exact same nav/footer/styles rather than
+ * a second, drifting copy.
+ */
+export function renderLandingLogo(idSuffix: string): string {
   return `<span class="logo">
     <svg width="28" height="28" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <defs>
@@ -76,9 +83,69 @@ function renderLandingLogo(idSuffix: string): string {
   </span>`;
 }
 
-const FIGMA_FONT_LINKS = `<link rel="preconnect" href="https://fonts.googleapis.com">
+export const FIGMA_FONT_LINKS = `<link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Gabarito:wght@600;700;800&family=Geist:wght@400;500;600&family=Geist+Mono:wght@500;600;700&display=swap" rel="stylesheet">`;
+
+/**
+ * Nav is identical on every page in this visual system. Links use absolute
+ * `/#anchor` paths (not bare `#anchor`) deliberately — a bare hash link
+ * only works when you're already on `/`; the absolute form works
+ * correctly from any page, including this one.
+ */
+export function renderLandingNav(): string {
+  return `<nav class="topnav">
+  <a href="/" style="text-decoration:none">${renderLandingLogo("nav")}</a>
+  <div class="navlinks">
+    <a href="/#features">Features</a>
+    <a href="/#how-it-works">How It Works</a>
+    <a href="/auth.md">Docs</a>
+  </div>
+</nav>`;
+}
+
+/** Footer is identical on every page in this visual system — see renderLandingNav's comment. */
+export function renderLandingFooter(): string {
+  return `<footer class="sitefoot">
+  <div class="inner">
+    <div class="foot-grid">
+      <div class="foot-brand">
+        ${renderLandingLogo("foot")}
+        <p>Pre-payment trust checks for autonomous agent commerce via x402. Deciding whether to pay, before you pay.</p>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1.5rem;">
+        <div class="foot-col">
+          <h4>Product</h4>
+          <ul>
+            <li><a href="/#features">Features</a></li>
+            <li><a href="/#how-it-works">How It Works</a></li>
+            <li><a href="/#integrate">Integrate</a></li>
+          </ul>
+        </div>
+        <div class="foot-col">
+          <h4>Developers</h4>
+          <ul>
+            <li><a href="/auth.md">Docs</a></li>
+            <li><a href="/methodology">Methodology</a></li>
+            <li><a href="https://mcp.gradientdecisions.com/mcp">MCP Endpoint</a></li>
+            <li><a href="/.well-known/api-catalog">API Catalog</a></li>
+          </ul>
+        </div>
+        <div class="foot-col">
+          <h4>Legal</h4>
+          <ul>
+            <li><a href="/privacy">Privacy Policy</a></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2026 Gradient Decisions. Built for autonomous agent commerce.</span>
+      <a href="/privacy">Privacy policy</a>
+    </div>
+  </div>
+</footer>`;
+}
 
 const MCP_CONFIG_SNIPPET = `{
   "mcpServers": {
@@ -169,24 +236,30 @@ function renderFeaturedMerchantCard(m: FeaturedMerchant): string {
       m.reasons.length > 0
         ? `<div class="m-reasons">
       <span class="m-reasons-label">Why</span>
-      <ul>${m.reasons.map((r) => `<li>${r}</li>`).join("")}</ul>
+      <ul class="dash-list">${m.reasons.map((r) => `<li>${r}</li>`).join("")}</ul>
     </div>`
         : ""
     }
   </div>`;
 }
 
-export function renderHomePlaceholderHtml(summary: DashboardSummary, featuredMerchants: FeaturedMerchant[]): string {
-  const { counts, countsByChain, total, lastRefreshedAt } = summary;
-  const baseTotal = chainTotal(countsByChain.base);
-  const solanaTotal = chainTotal(countsByChain.solana);
-
-  return `<title>x402 Merchant Check | Gradient Decisions</title>
-<meta name="description" content="Pre-payment merchant trust checks for x402 agents, via the check_merchant MCP tool.">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-${FAVICON_LINK}
-${FIGMA_FONT_LINKS}
-<style>
+/**
+ * Shared CSS for every page in this visual system (see renderLandingNav's
+ * comment) — one constant, not a copy per page, so a token/component
+ * tweak in one place can't drift between the homepage and (so far)
+ * src/methodology.ts.
+ *
+ * Includes `.checklist`/`.dash-list` (generic checkmark/dash bullet lists,
+ * factored out of what was originally just `.integrate-copy ul`/
+ * `.merchant-card .m-reasons` so other pages can use the same look without
+ * needing a fake `.integrate-copy`/`.merchant-card` wrapper) and
+ * `.m-badge*` with the old `.merchant-card ` selector prefix dropped —
+ * both changes made when this block was extracted, purely to make them
+ * reusable outside the merchant cards that originally motivated them; no
+ * visual change on this page, since both were already only ever used
+ * inside their original containers anyway.
+ */
+export const LANDING_STYLES = `<style>
   :root {
     --bg: #ffffff; --bg-soft: #fff7f2; --bg-muted: #f9fafb; --surface: #ffffff; --border: #e5e7eb;
     --text: #111827; --text-body: #374151; --text-dim: #6b7280;
@@ -220,9 +293,7 @@ ${FIGMA_FONT_LINKS}
   /* Translucent-white pill treatment (not a flat tint) — sits directly on
      .gradient-wrap's pink/orange background, not a plain page background,
      so it needs real fill contrast rather than an 8%-opacity tint that
-     would nearly disappear against an already-colored backdrop. Only one
-     tag left on the page (the hero's) after trimming the rest — each
-     section's own heading already said what its tag repeated. */
+     would nearly disappear against an already-colored backdrop. */
   .tag.peach { background: rgba(255,255,255,.5); color: #7c2d12; border-color: rgba(17,24,39,.18); }
 
   .btn {
@@ -252,10 +323,7 @@ ${FIGMA_FONT_LINKS}
   nav.topnav .navlinks a:hover { color: var(--text); }
   @media (max-width: 720px) { nav.topnav .navlinks { display: none; } }
 
-  /* Same pink-to-orange gradient as the logo mark (#fbcfe8 -> #fdba74),
-     stretched across the wrapper spanning hero through the CTA section
-     (see the HTML below) rather than confined to the hero band alone —
-     "let's see what it looks like if applied to most of the landing page".
+  /* Same pink-to-orange gradient as the logo mark (#fbcfe8 -> #fdba74).
      The wrap's own height comes from its content (no fixed-position/
      viewport tricks needed): a block-level gradient background simply
      fills whatever height its container renders at. Nav and footer stay
@@ -280,15 +348,13 @@ ${FIGMA_FONT_LINKS}
 
   .features-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.25rem; }
   .feature-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl); padding: 1.75rem; }
+  .feature-card .f-top { display: flex; justify-content: space-between; align-items: flex-start; gap: .75rem; }
   .feature-card .f-icon { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border-radius: var(--r-md); background: var(--accent-tint); font-size: 1.3rem; margin-bottom: 1rem; }
   .feature-card h3 { font-size: 1.05rem; font-weight: 700; margin-bottom: .5rem; }
   .feature-card p { font-size: .88rem; color: var(--text-dim); margin: 0; }
 
   .integrate-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2.5rem; align-items: center; }
   @media (max-width: 860px) { .integrate-grid { grid-template-columns: 1fr; } }
-  .integrate-copy ul { list-style: none; padding: 0; margin: 1.25rem 0 0; display: flex; flex-direction: column; gap: .55rem; }
-  .integrate-copy li { font-size: .88rem; color: var(--text-body); display: flex; gap: .5rem; align-items: baseline; }
-  .integrate-copy li::before { content: "✓"; color: var(--proceed); font-weight: 700; }
   .code-window { background: var(--bg-muted); border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden; }
   .code-window .code-titlebar { display: flex; align-items: center; justify-content: space-between; padding: .6rem .9rem; border-bottom: 1px solid var(--border); }
   .code-window .dots { display: flex; gap: .35rem; }
@@ -299,11 +365,22 @@ ${FIGMA_FONT_LINKS}
   .code-window .filename { font-family: "Geist Mono", monospace; font-size: .75rem; color: var(--text-dim); }
   .code-window pre { margin: 0; padding: 1.1rem 1.2rem; font-family: "Geist Mono", monospace; font-size: .8rem; line-height: 1.6; overflow-x: auto; color: var(--text-body); }
 
-  /* Translucent white wash, not the old opaque --bg-muted fill — the dense
-     numbers here (and --accent2-ink's maroon tone specifically, which is
-     close enough to the gradient's own pink to lose definition without
-     help) need more separation from .gradient-wrap's background than the
-     lighter card/tag treatment elsewhere on this band. */
+  /* Generic checkmark list — was .integrate-copy ul/li, promoted to a
+     standalone class so any page can use the same look. */
+  .checklist { list-style: none; padding: 0; margin: 1.25rem 0 0; display: flex; flex-direction: column; gap: .55rem; }
+  .checklist li { font-size: .88rem; color: var(--text-body); display: flex; gap: .5rem; align-items: baseline; }
+  .checklist li::before { content: "✓"; color: var(--proceed); font-weight: 700; }
+
+  /* Generic dash list — was .merchant-card .m-reasons ul/li, same promotion. */
+  .dash-list { list-style: none; margin: .45rem 0 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
+  .dash-list li { font-size: .86rem; color: var(--text-body); padding-left: .9rem; position: relative; }
+  .dash-list li::before { content: "—"; position: absolute; left: 0; color: var(--text-dim); }
+
+  /* Translucent white wash, not an opaque fill — the dense numbers here
+     (and --accent2-ink's maroon tone specifically, which is close enough
+     to the gradient's own pink to lose definition without help) need more
+     separation from .gradient-wrap's background than the lighter
+     card/tag treatment elsewhere. */
   .stats-band { background: rgba(255,255,255,.6); border-top: 1px solid rgba(17,24,39,.1); border-bottom: 1px solid rgba(17,24,39,.1); padding: 3rem 1.5rem; }
   .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1.5rem; text-align: center; }
   .stats-grid .n { font-family: "Gabarito", sans-serif; font-size: clamp(1.6rem, 3vw, 2.2rem); font-weight: 800; color: var(--accent2-ink); }
@@ -320,10 +397,13 @@ ${FIGMA_FONT_LINKS}
   .merchant-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 1.5rem; }
   .merchant-card .m-top { display: flex; justify-content: space-between; align-items: flex-start; gap: .75rem; margin-bottom: .5rem; }
   .merchant-card h3 { font-size: 1.05rem; font-weight: 700; }
-  .merchant-card .m-badge { flex-shrink: 0; font-family: "Geist Mono", monospace; font-size: .68rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; border-radius: var(--r-pill); padding: .25rem .65rem; white-space: nowrap; }
-  .merchant-card .m-badge-proceed { background: var(--proceed-bg); color: var(--proceed); }
-  .merchant-card .m-badge-caution { background: var(--caution-bg); color: var(--caution); }
-  .merchant-card .m-badge-insufficient { background: var(--insufficient-bg); color: var(--insufficient); }
+  /* .m-badge* used to be scoped under .merchant-card — generalized (see
+     this constant's own doc comment) so src/methodology.ts's signal cards
+     can reuse the same LIVE/DORMANT/STUBBED-style status pills. */
+  .m-badge { flex-shrink: 0; font-family: "Geist Mono", monospace; font-size: .68rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; border-radius: var(--r-pill); padding: .25rem .65rem; white-space: nowrap; }
+  .m-badge-proceed { background: var(--proceed-bg); color: var(--proceed); }
+  .m-badge-caution { background: var(--caution-bg); color: var(--caution); }
+  .m-badge-insufficient { background: var(--insufficient-bg); color: var(--insufficient); }
   .merchant-card .m-domain { font-family: "Geist Mono", monospace; font-size: .78rem; color: var(--text-dim); display: block; }
   .merchant-card .m-cat { font-size: .78rem; color: var(--accent-ink); display: block; margin: .35rem 0 .6rem; }
   .merchant-card p { font-size: .86rem; color: var(--text-dim); margin: 0 0 .9rem; }
@@ -334,9 +414,6 @@ ${FIGMA_FONT_LINKS}
   .m-fairness-low { color: var(--accent2-ink); }
   .merchant-card .m-reasons { margin-top: 1rem; padding-top: .9rem; border-top: 1px solid var(--border); }
   .merchant-card .m-reasons-label { font-family: "Geist Mono", monospace; font-size: .68rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); }
-  .merchant-card .m-reasons ul { list-style: none; margin: .45rem 0 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
-  .merchant-card .m-reasons li { font-size: .82rem; color: var(--text-body); padding-left: .9rem; position: relative; }
-  .merchant-card .m-reasons li::before { content: "—"; position: absolute; left: 0; color: var(--text-dim); }
   .merchants-note { font-size: .8rem; color: var(--text-dim); margin-top: 1.5rem; max-width: 70ch; }
 
   .cta-section { text-align: center; }
@@ -354,16 +431,32 @@ ${FIGMA_FONT_LINKS}
   footer.sitefoot .foot-col a:hover { color: var(--text); }
   footer.sitefoot .foot-bottom { border-top: 1px solid var(--border); margin-top: 2.5rem; padding-top: 1.25rem; font-size: .78rem; color: var(--text-dim); display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem; }
   footer.sitefoot .foot-bottom a { color: var(--text-dim); }
-</style>
 
-<nav class="topnav">
-  <a href="/" style="text-decoration:none">${renderLandingLogo("nav")}</a>
-  <div class="navlinks">
-    <a href="#features">Features</a>
-    <a href="#how-it-works">How It Works</a>
-    <a href="/auth.md">Docs</a>
-  </div>
-</nav>
+  /* Prose pages (src/methodology.ts) — plain long-form reading, not another
+     card grid. Kept here rather than a separate constant since it's a
+     handful of rules, not a whole second stylesheet. */
+  .prose { max-width: 760px; }
+  .prose p { margin: 0 0 1rem; }
+  .prose h2 { margin-top: 0; }
+  .doc-section { padding: 3rem 1.5rem; }
+  .doc-section:first-of-type { padding-top: 3.5rem; }
+  .back-link { display: inline-flex; align-items: center; gap: .4rem; font-size: .88rem; color: var(--text-dim); text-decoration: none; margin-bottom: 1.5rem; }
+  .back-link:hover { color: var(--text); }
+</style>`;
+
+export function renderHomePlaceholderHtml(summary: DashboardSummary, featuredMerchants: FeaturedMerchant[]): string {
+  const { counts, countsByChain, total, lastRefreshedAt } = summary;
+  const baseTotal = chainTotal(countsByChain.base);
+  const solanaTotal = chainTotal(countsByChain.solana);
+
+  return `<title>x402 Merchant Check | Gradient Decisions</title>
+<meta name="description" content="Pre-payment merchant trust checks for x402 agents, via the check_merchant MCP tool.">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+${FAVICON_LINK}
+${FIGMA_FONT_LINKS}
+${LANDING_STYLES}
+
+${renderLandingNav()}
 
 <div class="gradient-wrap">
 <section class="hero">
@@ -429,7 +522,7 @@ ${FIGMA_FONT_LINKS}
           can call <code class="mono">check_merchant</code> directly — no API keys, no accounts, every call
           authenticated by its own x402 payment.
         </p>
-        <ul>
+        <ul class="checklist">
           <li>No accounts or API keys — payment is the auth</li>
           <li>$0.01 USDC per check, via x402 on Base mainnet</li>
           <li>Same tool available as plain HTTP at <code class="mono">GET /check</code></li>
@@ -480,48 +573,11 @@ ${FIGMA_FONT_LINKS}
     <p>Add Gradient Decisions to your agent's MCP config in under five minutes. Every check is $0.01, paid the same way as the payment it's protecting.</p>
     <div class="cta-row">
       <a class="btn btn-primary" href="#integrate">Integrate MCP Server Now</a>
-      <a class="btn btn-secondary" href="/methodology.md">Read the Docs</a>
+      <a class="btn btn-secondary" href="/methodology">Read the Docs</a>
     </div>
   </div>
 </section>
 </div>
 
-<footer class="sitefoot">
-  <div class="inner">
-    <div class="foot-grid">
-      <div class="foot-brand">
-        ${renderLandingLogo("foot")}
-        <p>Pre-payment trust checks for autonomous agent commerce via x402. Deciding whether to pay, before you pay.</p>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1.5rem;">
-        <div class="foot-col">
-          <h4>Product</h4>
-          <ul>
-            <li><a href="#features">Features</a></li>
-            <li><a href="#how-it-works">How It Works</a></li>
-            <li><a href="#integrate">Integrate</a></li>
-          </ul>
-        </div>
-        <div class="foot-col">
-          <h4>Developers</h4>
-          <ul>
-            <li><a href="/auth.md">Docs</a></li>
-            <li><a href="https://mcp.gradientdecisions.com/mcp">MCP Endpoint</a></li>
-            <li><a href="/.well-known/api-catalog">API Catalog</a></li>
-          </ul>
-        </div>
-        <div class="foot-col">
-          <h4>Legal</h4>
-          <ul>
-            <li><a href="/privacy">Privacy Policy</a></li>
-          </ul>
-        </div>
-      </div>
-    </div>
-    <div class="foot-bottom">
-      <span>© 2026 Gradient Decisions. Built for autonomous agent commerce.</span>
-      <a href="/privacy">Privacy policy</a>
-    </div>
-  </div>
-</footer>`;
+${renderLandingFooter()}`;
 }

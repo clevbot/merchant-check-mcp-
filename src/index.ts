@@ -15,6 +15,7 @@ import { runCategorization } from "./categorize";
 import { getCallerAnalytics, renderCallerDashboardHtml, callerAnalyticsToJson } from "./callerDashboard";
 import { renderPrivacyPolicyHtml } from "./privacy";
 import { renderHomePlaceholderHtml } from "./homePlaceholder";
+import { renderMethodologyHtml } from "./methodology";
 import { getDashboardSummary, getFeaturedMerchants } from "./dashboard";
 import { handleCheckGet } from "./httpCheckEndpoint";
 import {
@@ -552,10 +553,20 @@ export default {
     }
     // Prose scoring explainer for a human evaluator, cross-linked with
     // auth.md (protocol mechanics for an integrating agent) — see
-    // src/agentReadiness.ts's renderMethodologyMd for the full reasoning.
-    if (url.pathname === "/methodology.md") {
-      return new Response(renderMethodologyMd(), {
-        headers: { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "public, max-age=3600" },
+    // src/methodology.ts's own header comment for the full reasoning.
+    // Styled HTML page by default (2026-08-19, "just make the methodology
+    // another webpage with the same theme"), same Accept: text/markdown
+    // content negotiation the homepage route uses, reusing the same
+    // renderMethodologyMd() prose src/agentReadiness.ts already had rather
+    // than a second copy for the markdown branch.
+    if (url.pathname === "/methodology") {
+      if (wantsMarkdown(request)) {
+        return new Response(renderMethodologyMd(), {
+          headers: { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "public, max-age=3600", Vary: "Accept" },
+        });
+      }
+      return new Response(renderMethodologyHtml(), {
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=3600", Vary: "Accept" },
       });
     }
     // MCP Server Card (2026-08-19) — the one "Advanced Integration" item
