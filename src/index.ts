@@ -16,6 +16,7 @@ import { getCallerAnalytics, renderCallerDashboardHtml, callerAnalyticsToJson } 
 import { renderPrivacyPolicyHtml } from "./privacy";
 import { renderHomePlaceholderHtml } from "./homePlaceholder";
 import { getDashboardSummary } from "./dashboard";
+import { handleCheckGet } from "./httpCheckEndpoint";
 import {
   API_CATALOG_LINK_HEADER,
   MCP_SERVER_CARD_PATHS,
@@ -556,6 +557,17 @@ export default {
       return new Response(renderPrivacyPolicyHtml(), {
         headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=3600" },
       });
+    }
+
+    // Plain-HTTP x402 mirror of check_merchant (2026-08-19) — see
+    // src/httpCheckEndpoint.ts for why this exists (short version: the
+    // MCP path's 402 challenge lives inside a JSON-RPC response body, so
+    // plain HTTP clients/scanners that just send a bare GET can never see
+    // it there; this route gives a real literal-402 entry point onto the
+    // exact same facilitator/settlement path).
+    if (url.pathname === "/check" && request.method === "GET") {
+      const resourceServer = await getResourceServer(env);
+      return handleCheckGet(request, env, resourceServer);
     }
 
     if (url.pathname !== "/mcp") {
