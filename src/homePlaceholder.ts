@@ -217,13 +217,13 @@ ${FIGMA_FONT_LINKS}
     letter-spacing: .06em; text-transform: uppercase; padding: .35rem .85rem; border-radius: var(--r-pill);
     border: 1px solid currentColor;
   }
-  /* Translucent-white pill treatment (not a flat tint) — these badges spend
-     most of their life sitting directly on .gradient-wrap's pink/orange
-     background now, not a plain page background, so they need real fill
-     contrast rather than an 8%-opacity tint that would nearly disappear
-     against an already-colored backdrop. */
+  /* Translucent-white pill treatment (not a flat tint) — sits directly on
+     .gradient-wrap's pink/orange background, not a plain page background,
+     so it needs real fill contrast rather than an 8%-opacity tint that
+     would nearly disappear against an already-colored backdrop. Only one
+     tag left on the page (the hero's) after trimming the rest — each
+     section's own heading already said what its tag repeated. */
   .tag.peach { background: rgba(255,255,255,.5); color: #7c2d12; border-color: rgba(17,24,39,.18); }
-  .tag.pink { background: rgba(255,255,255,.5); color: #9d174d; border-color: rgba(17,24,39,.18); }
 
   .btn {
     display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
@@ -250,7 +250,6 @@ ${FIGMA_FONT_LINKS}
   nav.topnav .navlinks { display: flex; gap: 1.75rem; font-size: .9rem; }
   nav.topnav .navlinks a { color: var(--text-body); text-decoration: none; }
   nav.topnav .navlinks a:hover { color: var(--text); }
-  nav.topnav .navright { display: flex; align-items: center; gap: 1.25rem; }
   @media (max-width: 720px) { nav.topnav .navlinks { display: none; } }
 
   /* Same pink-to-orange gradient as the logo mark (#fbcfe8 -> #fdba74),
@@ -364,9 +363,6 @@ ${FIGMA_FONT_LINKS}
     <a href="#how-it-works">How It Works</a>
     <a href="/auth.md">Docs</a>
   </div>
-  <div class="navright">
-    <a class="btn btn-primary" href="#integrate">Get Started</a>
-  </div>
 </nav>
 
 <div class="gradient-wrap">
@@ -380,8 +376,7 @@ ${FIGMA_FONT_LINKS}
       commits to a real payment.
     </p>
     <div class="cta-row">
-      <a class="btn btn-primary" href="#integrate">Start Integrating</a>
-      <a class="btn btn-secondary" href="#how-it-works">See How It Works</a>
+      <a class="btn btn-secondary" href="#integrate">Start Integrating</a>
     </div>
   </div>
 </section>
@@ -390,7 +385,6 @@ ${FIGMA_FONT_LINKS}
   <div class="inner">
     <div class="workflow-head-flex">
       <div class="section-head">
-        <span class="tag pink">END-TO-END VALIDATION</span>
         <h2>How check_merchant Fits Into Agentic Commerce</h2>
       </div>
       <p class="side-note">Agents are autonomous but still need a trust check at the moment of payment. Here's where Gradient Decisions sits in that loop.</p>
@@ -411,7 +405,6 @@ ${FIGMA_FONT_LINKS}
 <section id="features">
   <div class="inner">
     <div class="section-head">
-      <span class="tag pink">ENGINEERED FOR AGENTS</span>
       <h2>Built Specifically For Autonomous Commerce</h2>
     </div>
     <div class="features-grid">
@@ -430,8 +423,7 @@ ${FIGMA_FONT_LINKS}
   <div class="inner">
     <div class="integrate-grid">
       <div class="integrate-copy">
-        <span class="tag pink">DEVELOPER FIRST</span>
-        <h2 style="margin-top:1rem;font-size:clamp(1.5rem,3vw,2rem);font-weight:700;">Integrate in Minutes</h2>
+        <h2 style="font-size:clamp(1.5rem,3vw,2rem);font-weight:700;">Integrate in Minutes</h2>
         <p style="color:var(--text-dim);margin-top:.85rem;">
           Gradient Decisions works natively via MCP over streamable HTTP. Add it as a remote server and your agent
           can call <code class="mono">check_merchant</code> directly — no API keys, no accounts, every call
@@ -473,7 +465,6 @@ ${FIGMA_FONT_LINKS}
 <section>
   <div class="inner">
     <div class="section-head">
-      <span class="tag peach">INDEXED X402 MERCHANTS</span>
       <h2>Real Merchants In Our Index</h2>
     </div>
     <div class="merchants-grid">
@@ -485,7 +476,6 @@ ${FIGMA_FONT_LINKS}
 
 <section class="cta-section">
   <div class="inner">
-    <span class="tag pink">START INTEGRATING</span>
     <h2>Give Your Agent A Reason To Trust The Payment</h2>
     <p>Add Gradient Decisions to your agent's MCP config in under five minutes. Every check is $0.01, paid the same way as the payment it's protecting.</p>
     <div class="cta-row">
