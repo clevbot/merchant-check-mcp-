@@ -211,6 +211,115 @@ export async function getDashboardSummary(env: Env): Promise<DashboardSummary> {
   return { counts, countsByChain, total: results.length, lastRefreshedAt };
 }
 
+export interface FeaturedMerchant {
+  name: string;
+  domain: string;
+  walletAddress: string;
+  chain: string;
+  category: string;
+  recommendation: Recommendation;
+  trustTier: Tier;
+  confidence: Confidence;
+  totalTxCount: number;
+  uniquePayerCount: number;
+  payerConcentration: PayerConcentration;
+  walletAgeDays: number | null;
+  priceFairness: PriceFairness;
+  ownPricesAtomic: number[];
+  reasons: string[];
+}
+
+/**
+ * Explicit, hardcoded 2-wallet allowlist (2026-08-19) — a deliberate,
+ * narrowly-scoped exception to the "Data access policy" lockdown (see
+ * README), made at the user's explicit request to show Exa's and Vaaya's
+ * real scoring on the public landing page ("include the stats and scoring
+ * information about those two examples"). This is NOT a general
+ * per-merchant lookup: /merchant/* and /api/wallets stay retired, and
+ * nothing here accepts an arbitrary wallet address from a caller — only
+ * these two specific, owner-approved wallets ever get their tier/signals
+ * rendered publicly. Wallet addresses confirmed via a direct D1 query
+ * before adding this (see git history), not guessed.
+ */
+const FEATURED_MERCHANT_WALLETS: { name: string; domain: string; walletAddress: string }[] = [
+  { name: "Exa", domain: "api.exa.ai", walletAddress: "0x6d6e695b09861467c7d462f5aaf31cf3540b9192" },
+  { name: "Vaaya", domain: "vaaya.ai", walletAddress: "0x7c655d3d3944bd27994dd81a036c3afb19806c40" },
+];
+
+/**
+ * Live-queried, not a static snapshot — reuses the exact same
+ * deriveRecommendation/deriveConfidence/derivePayerConcentration/
+ * scorePriceFairness functions check_merchant itself calls (src/tool.ts,
+ * src/scoring.ts), so what's shown here can never drift out of sync with
+ * what check_merchant would actually return for these two wallets right
+ * now. Category-peer price comparison mirrors getDashboardData's own
+ * logic (excludes the wallet's own rows from its peer set).
+ */
+export async function getFeaturedMerchants(env: Env): Promise<FeaturedMerchant[]> {
+  const wallets = FEATURED_MERCHANT_WALLETS.map((m) => m.walletAddress);
+  const placeholders = wallets.map(() => "?").join(", ");
+
+  const { results: rows } = await env.DB.prepare(
+    `SELECT wallet_address, chain, tier, reasons_json, total_tx_count, unique_payer_count,
+            wallet_age_days, category
+     FROM merchant_signals WHERE wallet_address IN (${placeholders})`,
+  )
+    .bind(...wallets)
+    .all<RawDashboardRow>();
+
+  const { results: priceRows } = await env.DB.prepare(
+    `SELECT wallet_address, resource_type AS category, price_atomic
+     FROM price_observations WHERE payer_address IS NULL`,
+  ).all<{ wallet_address: string; category: string; price_atomic: number }>();
+
+  const pricesByWallet = new Map<string, number[]>();
+  const pricesByCategory = new Map<string, { wallet: string; price: number }[]>();
+  for (const p of priceRows) {
+    pricesByWallet.set(p.wallet_address, [...(pricesByWallet.get(p.wallet_address) ?? []), p.price_atomic]);
+    pricesByCategory.set(p.category, [...(pricesByCategory.get(p.category) ?? []), { wallet: p.wallet_address, price: p.price_atomic }]);
+  }
+
+  const rowsByWallet = new Map(rows.map((r) => [r.wallet_address, r]));
+
+  return FEATURED_MERCHANT_WALLETS.flatMap(({ name, domain, walletAddress }) => {
+    const row = rowsByWallet.get(walletAddress);
+    if (!row) return []; // Not indexed (or not yet refreshed) — omit rather than fabricate a placeholder row.
+
+    const dataSufficiency: DataSufficiency = row.total_tx_count < MIN_TX_FOR_CONFIDENCE ? "INSUFFICIENT" : "SUFFICIENT";
+    const tier = (row.tier === "trusted" || row.tier === "caution" || row.tier === "avoid" ? row.tier : "caution") as Tier;
+
+    const ownPricesAtomic = pricesByWallet.get(walletAddress) ?? [];
+    const ownMedian = median(ownPricesAtomic);
+    let priceFairness: PriceFairness = "unknown";
+    if (ownMedian !== null && row.category) {
+      const peers = (pricesByCategory.get(row.category) ?? [])
+        .filter((p) => p.wallet !== walletAddress)
+        .map((p) => p.price);
+      priceFairness = scorePriceFairness(ownMedian, peers);
+    }
+
+    return [
+      {
+        name,
+        domain,
+        walletAddress,
+        chain: row.chain,
+        category: row.category ?? "uncategorized",
+        recommendation: deriveRecommendation(dataSufficiency, tier),
+        trustTier: tier,
+        confidence: deriveConfidence(row.total_tx_count),
+        totalTxCount: row.total_tx_count,
+        uniquePayerCount: row.unique_payer_count,
+        payerConcentration: derivePayerConcentration(row.unique_payer_count, row.total_tx_count),
+        walletAgeDays: row.wallet_age_days,
+        priceFairness,
+        ownPricesAtomic,
+        reasons: row.reasons_json ? JSON.parse(row.reasons_json) : [],
+      },
+    ];
+  });
+}
+
 /** Exported so src/callerDashboard.ts (internal admin dashboard) reuses the same escaping instead of a second copy. */
 export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);

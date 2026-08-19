@@ -44,7 +44,8 @@
  * site-wide by this task, just not reused here where the source design
  * specifies something else.
  */
-import type { DashboardSummary, RecommendationCounts } from "./dashboard";
+import type { DashboardSummary, FeaturedMerchant, RecommendationCounts } from "./dashboard";
+import { recommendationLabel, recommendationSlug } from "./dashboard";
 import { FAVICON_LINK } from "./brand";
 
 function relativeTime(unixSeconds: number): string {
@@ -115,25 +116,59 @@ const FEATURE_CARDS: FeatureCard[] = [
   { icon: "🔌", title: "MCP-Native, With a Plain-HTTP Fallback", body: "Works out of the box as an MCP tool over streamable HTTP, or as a plain GET /check endpoint for HTTP-only x402 clients." },
 ];
 
-interface IndexedMerchant {
-  name: string;
-  category: string;
-  domain: string;
-  blurb: string;
+/**
+ * Editorial copy (what a merchant does, and the human-friendly category
+ * label) for the two src/dashboard.ts getFeaturedMerchants() wallets —
+ * kept separate from the real scoring `category` column (which holds the
+ * scoring pipeline's own coarser buckets, e.g. "data_api"/"other") since
+ * that's not written as public-facing copy. Everything else about these
+ * two cards (tier, recommendation, signals, pricing) is live, not this
+ * static copy — see file header and getFeaturedMerchants' own comment for
+ * why these two, specifically, are the one deliberate exception to the
+ * "Data access policy" lockdown.
+ */
+const MERCHANT_BLURBS: Record<string, { displayCategory: string; blurb: string }> = {
+  Exa: { displayCategory: "Search API", blurb: "Search and content retrieval for agents." },
+  Vaaya: { displayCategory: "Agent Tool Gateway", blurb: "Multi-tool x402 gateway — search, scraping, sandboxes, media generation." },
+};
+
+function formatUsdPriceRange(pricesAtomic: number[]): string | null {
+  if (pricesAtomic.length === 0) return null;
+  const usd = pricesAtomic.map((p) => p / 1_000_000);
+  const min = Math.min(...usd);
+  const max = Math.max(...usd);
+  const fmt = (n: number) => `$${n < 0.01 ? n.toFixed(4) : n.toFixed(2)}`;
+  return min === max ? fmt(min) : `${fmt(min)}–${fmt(max)}`;
 }
 
-/**
- * Real, currently-indexed rows (confirmed via a direct D1 query before
- * writing this), shown as named examples of what's in the index — not as a
- * live check_merchant result. See file header for why tier/recommendation
- * is deliberately never rendered here.
- */
-const INDEXED_MERCHANTS: IndexedMerchant[] = [
-  { name: "Exa", category: "Search API", domain: "api.exa.ai", blurb: "Search and content retrieval for agents. Indexed on Base." },
-  { name: "Vaaya", category: "Agent Tool Gateway", domain: "vaaya.ai", blurb: "Multi-tool x402 gateway — search, scraping, sandboxes, media generation. Indexed on Base." },
-];
+/** Live check_merchant-equivalent card for the two src/dashboard.ts getFeaturedMerchants() wallets — see that function's comment for scope. */
+function renderFeaturedMerchantCard(m: FeaturedMerchant): string {
+  const copy = MERCHANT_BLURBS[m.name] ?? { displayCategory: m.category, blurb: "" };
+  const recSlug = recommendationSlug(m.recommendation);
+  const priceRange = formatUsdPriceRange(m.ownPricesAtomic);
+  const priceLine =
+    priceRange !== null
+      ? `<span class="m-signal">${priceRange}${m.priceFairness !== "unknown" ? ` <span class="m-fairness m-fairness-${m.priceFairness}">${m.priceFairness}</span>` : ""}</span>`
+      : "";
+  return `<div class="merchant-card">
+    <div class="m-top">
+      <h3>${m.name}</h3>
+      <span class="m-badge m-badge-${recSlug}" title="trust_tier: ${m.trustTier.toUpperCase()}">${recommendationLabel(m.recommendation)}</span>
+    </div>
+    <code class="m-domain">${m.domain}</code>
+    <span class="m-cat">${copy.displayCategory} · ${m.chain}</span>
+    <p>${copy.blurb}</p>
+    <div class="m-signals">
+      <span class="m-signal">${m.totalTxCount.toLocaleString()} calls (30d)</span>
+      <span class="m-signal">${m.uniquePayerCount.toLocaleString()} unique payers</span>
+      ${m.walletAgeDays !== null ? `<span class="m-signal">${m.walletAgeDays}d wallet age</span>` : ""}
+      <span class="m-signal">${m.confidence.toLowerCase()} confidence</span>
+      ${priceLine}
+    </div>
+  </div>`;
+}
 
-export function renderHomePlaceholderHtml(summary: DashboardSummary): string {
+export function renderHomePlaceholderHtml(summary: DashboardSummary, featuredMerchants: FeaturedMerchant[]): string {
   const { counts, countsByChain, total, lastRefreshedAt } = summary;
   const baseTotal = chainTotal(countsByChain.base);
   const solanaTotal = chainTotal(countsByChain.solana);
@@ -264,11 +299,20 @@ ${FIGMA_FONT_LINKS}
 
   .merchants-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.25rem; }
   .merchant-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 1.5rem; }
-  .merchant-card .m-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: .6rem; }
+  .merchant-card .m-top { display: flex; justify-content: space-between; align-items: flex-start; gap: .75rem; margin-bottom: .5rem; }
   .merchant-card h3 { font-size: 1.05rem; font-weight: 700; }
-  .merchant-card .m-cat { font-family: "Geist Mono", monospace; font-size: .68rem; text-transform: uppercase; letter-spacing: .05em; color: var(--accent-ink); background: var(--accent-tint); border-radius: var(--r-sm); padding: .2rem .5rem; }
-  .merchant-card .m-domain { font-family: "Geist Mono", monospace; font-size: .78rem; color: var(--text-dim); margin-bottom: .5rem; display: block; }
-  .merchant-card p { font-size: .86rem; color: var(--text-dim); margin: 0; }
+  .merchant-card .m-badge { flex-shrink: 0; font-family: "Geist Mono", monospace; font-size: .68rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; border-radius: var(--r-pill); padding: .25rem .65rem; white-space: nowrap; }
+  .merchant-card .m-badge-proceed { background: var(--proceed-bg); color: var(--proceed); }
+  .merchant-card .m-badge-caution { background: var(--caution-bg); color: var(--caution); }
+  .merchant-card .m-badge-insufficient { background: var(--insufficient-bg); color: var(--insufficient); }
+  .merchant-card .m-domain { font-family: "Geist Mono", monospace; font-size: .78rem; color: var(--text-dim); display: block; }
+  .merchant-card .m-cat { font-size: .78rem; color: var(--accent-ink); display: block; margin: .35rem 0 .6rem; }
+  .merchant-card p { font-size: .86rem; color: var(--text-dim); margin: 0 0 .9rem; }
+  .merchant-card .m-signals { display: flex; flex-wrap: wrap; gap: .4rem; }
+  .merchant-card .m-signal { font-family: "Geist Mono", monospace; font-size: .72rem; color: var(--text-body); background: var(--bg-muted); border: 1px solid var(--border); border-radius: var(--r-sm); padding: .2rem .5rem; }
+  .m-fairness-fair { color: var(--proceed); }
+  .m-fairness-high { color: var(--caution); }
+  .m-fairness-low { color: var(--accent2-ink); }
   .merchants-note { font-size: .8rem; color: var(--text-dim); margin-top: 1.5rem; max-width: 70ch; }
 
   .cta-section { text-align: center; background: var(--bg-soft); }
@@ -408,15 +452,9 @@ ${FIGMA_FONT_LINKS}
       <h2>Real Merchants In Our Index</h2>
     </div>
     <div class="merchants-grid">
-      ${INDEXED_MERCHANTS.map(
-        (m) => `<div class="merchant-card">
-        <div class="m-top"><h3>${m.name}</h3><span class="m-cat">${m.category}</span></div>
-        <code class="m-domain">${m.domain}</code>
-        <p>${m.blurb}</p>
-      </div>`,
-      ).join("\n")}
+      ${featuredMerchants.map(renderFeaturedMerchantCard).join("\n")}
     </div>
-    <p class="merchants-note">Trust tier and signals are the paid part of the product — shown to agents via <code class="mono">check_merchant</code>, not published here for any specific merchant.</p>
+    <p class="merchants-note">Live <code class="mono">check_merchant</code> output for two merchants already in the index — every other merchant's recommendation and signals stay behind the paid tool.</p>
   </div>
 </section>
 

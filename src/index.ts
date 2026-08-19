@@ -15,7 +15,7 @@ import { runCategorization } from "./categorize";
 import { getCallerAnalytics, renderCallerDashboardHtml, callerAnalyticsToJson } from "./callerDashboard";
 import { renderPrivacyPolicyHtml } from "./privacy";
 import { renderHomePlaceholderHtml } from "./homePlaceholder";
-import { getDashboardSummary } from "./dashboard";
+import { getDashboardSummary, getFeaturedMerchants } from "./dashboard";
 import { handleCheckGet } from "./httpCheckEndpoint";
 import {
   API_CATALOG_LINK_HEADER,
@@ -509,7 +509,8 @@ export default {
           },
         });
       }
-      return new Response(renderHomePlaceholderHtml(summary), {
+      const featuredMerchants = await getFeaturedMerchants(env);
+      return new Response(renderHomePlaceholderHtml(summary, featuredMerchants), {
         headers: {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "public, max-age=60",
