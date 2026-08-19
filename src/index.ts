@@ -18,12 +18,14 @@ import { renderHomePlaceholderHtml } from "./homePlaceholder";
 import { getDashboardSummary } from "./dashboard";
 import {
   API_CATALOG_LINK_HEADER,
+  MCP_SERVER_CARD_PATHS,
   ROBOTS_TXT,
   SAMPLE_CHECK_MERCHANT_INPUT,
   SAMPLE_CHECK_MERCHANT_OUTPUT,
   renderApiCatalogJson,
   renderAuthMd,
   renderHomeMarkdown,
+  renderMcpServerCardJson,
   renderSitemapXml,
   wantsMarkdown,
 } from "./agentReadiness";
@@ -508,6 +510,17 @@ export default {
     if (url.pathname === "/auth.md") {
       return new Response(renderAuthMd(), {
         headers: { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "public, max-age=3600" },
+      });
+    }
+    // MCP Server Card (2026-08-19) — the one "Advanced Integration" item
+    // that actually applies here; see src/agentReadiness.ts's own comment
+    // for why the other 7 in that tier were deliberately skipped, not
+    // overlooked. Served identically at all 3 candidate paths Cloudflare's
+    // scanner checks (confirmed via its audit log), since there's no single
+    // ratified spec URL for this yet.
+    if ((MCP_SERVER_CARD_PATHS as readonly string[]).includes(url.pathname)) {
+      return new Response(renderMcpServerCardJson(), {
+        headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=3600" },
       });
     }
     // 2026-08-19: retired, same reasoning as the homepage above — this was

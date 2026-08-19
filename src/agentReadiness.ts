@@ -62,6 +62,77 @@ export const SAMPLE_CHECK_MERCHANT_OUTPUT: CheckMerchantOutput = {
 };
 
 /**
+ * MCP Server Card (2026-08-19) — "Advanced Integration" quick win, and the
+ * *only* one of that tier's 8 items that actually fits this product. The
+ * other 7 (OAuth Discovery, OAuth Protected Resource, A2A Agent Card,
+ * Skills Index, Web Bot Auth, WebMCP, DNS-AID) were each checked
+ * individually against their own "How to implement" caveats and skipped
+ * for real reasons, not laziness:
+ * - OAuth Discovery / OAuth Protected Resource: both explicitly require
+ *   "a working login server" behind them — this has no accounts, no
+ *   OAuth, at all (see auth.md). Publishing either would advertise an
+ *   auth flow that doesn't exist.
+ * - A2A Agent Card / Skills Index: both explicitly "only relevant if your
+ *   site runs its own AI agent" — this site doesn't run an autonomous
+ *   agent, it's an MCP *tool* other agents call.
+ * - Web Bot Auth: for verifying *outbound* bot traffic (a crawler acting
+ *   on this site's behalf) is really from this site — there's no such
+ *   crawler; the refresh cron's calls to Bazaar/Helius/PayAI are normal
+ *   server-to-server API calls, not something needing bot-auth signing.
+ * - WebMCP: for exposing *client-side* browser actions (search, add-to-
+ *   cart) as agent tools. check_merchant is a paid, server-side,
+ *   payment-gated call — exposing it client-side would either not work
+ *   or risk a path that bypasses the x402 payment flow entirely, which
+ *   directly conflicts with this project's whole monetization model.
+ * - DNS-AID: same "not our own agent" reasoning as A2A, plus it requires
+ *   DNSSEC changes at the DNS provider — a real, separate infrastructure
+ *   decision, not something to bundle into an agent-readiness pass.
+ *
+ * Cloudflare's scanner checks three candidate paths (confirmed via its
+ * own audit log, not guessed) — served identically at all three since
+ * there's no single ratified spec URL yet for this convention.
+ */
+export const MCP_SERVER_CARD_PATHS = [
+  "/.well-known/mcp.json",
+  "/.well-known/mcp/server-card.json",
+  "/.well-known/mcp/server-cards.json",
+];
+
+export function renderMcpServerCardJson(): string {
+  const card = {
+    name: "merchant-check-mcp",
+    displayName: "x402 Merchant Check",
+    description:
+      "Pre-payment merchant trust checks for autonomous agents making x402 payments, backed by real on-chain and x402 settlement history on Base and Solana.",
+    url: `${MCP_ORIGIN}/mcp`,
+    protocol: "mcp",
+    transport: "streamable-http",
+    protocolVersion: "2025-06-18",
+    auth: {
+      type: "x402",
+      description: "No accounts or API keys — every call is authenticated by an x402 payment, per call. See auth.md.",
+      authDoc: `${SITE_ORIGIN}/auth.md`,
+    },
+    tools: [
+      {
+        name: "check_merchant",
+        description: "Machine-readable trust/pricing assessment for a merchant wallet, before paying it via x402.",
+        price: "$0.01 USDC per call, paid via x402 on Base mainnet (eip155:8453)",
+        sampleInput: SAMPLE_CHECK_MERCHANT_INPUT,
+        sampleOutput: SAMPLE_CHECK_MERCHANT_OUTPUT,
+      },
+    ],
+    links: {
+      apiCatalog: `${SITE_ORIGIN}/.well-known/api-catalog`,
+      auth: `${SITE_ORIGIN}/auth.md`,
+      privacy: `${SITE_ORIGIN}/privacy`,
+      stats: SITE_ORIGIN,
+    },
+  };
+  return JSON.stringify(card, null, 2);
+}
+
+/**
  * User-agent tokens: only the well-established, stably-documented ones are
  * listed by name (GPTBot, ClaudeBot, Google-Extended, PerplexityBot,
  * Bingbot) rather than guessing at every AI crawler's exact current token,
@@ -165,7 +236,7 @@ export const API_CATALOG_LINK_HEADER = `</.well-known/api-catalog>; rel="api-cat
  * data only ever comes back through an actual paid call.
  */
 export function renderAuthMd(): string {
-  return `# Authentication
+  return `# Auth.md — Authentication
 
 x402 Merchant Check has no accounts, no API keys, and no OAuth. There is nothing to register or log into.
 
