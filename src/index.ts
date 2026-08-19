@@ -15,6 +15,7 @@ import { runCategorization } from "./categorize";
 import { getDashboardData, renderDashboardHtml, dashboardDataToJson } from "./dashboard";
 import { getCallerAnalytics, renderCallerDashboardHtml, callerAnalyticsToJson } from "./callerDashboard";
 import { renderPrivacyPolicyHtml } from "./privacy";
+import { getMerchantProfileData, renderMerchantNotFoundHtml, renderMerchantProfileHtml } from "./merchantProfile";
 
 /**
  * Payment stack: @x402/core + @x402/evm + @x402/mcp — the official Coinbase/
@@ -448,6 +449,25 @@ export default {
     }
     if (url.pathname === "/api/wallets") {
       return dashboardDataToJson(await getDashboardData(env));
+    }
+    // Per-merchant profile page (2026-08-18) — reachable by clicking either
+    // the wallet address or the platform name on the dashboard table above.
+    // Path segment is the raw wallet address (0x-hex or base58), so decode
+    // it but otherwise pass through untouched — chain-specific
+    // normalization/case-handling happens inside getMerchantProfileData
+    // (src/chains.ts), not here.
+    if (url.pathname.startsWith("/merchant/")) {
+      const rawAddress = decodeURIComponent(url.pathname.slice("/merchant/".length));
+      const profile = await getMerchantProfileData(env, rawAddress);
+      if (!profile) {
+        return new Response(renderMerchantNotFoundHtml(rawAddress), {
+          status: 404,
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      }
+      return new Response(renderMerchantProfileHtml(profile), {
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=60" },
+      });
     }
     if (url.pathname === "/privacy") {
       return new Response(renderPrivacyPolicyHtml(), {

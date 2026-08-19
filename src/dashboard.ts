@@ -158,11 +158,13 @@ export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
-function truncateAddress(addr: string): string {
+/** Exported so src/merchantProfile.ts renders the same truncated form in its own header instead of a second copy. */
+export function truncateAddress(addr: string): string {
   return `${addr.slice(0, 8)}…${addr.slice(-6)}`;
 }
 
-function relativeTime(unixSeconds: number): string {
+/** Exported so src/merchantProfile.ts's "last refreshed" line matches the dashboard's own wording instead of a second copy. */
+export function relativeTime(unixSeconds: number): string {
   const diffMin = Math.floor((Date.now() / 1000 - unixSeconds) / 60);
   if (diffMin < 1) return "just now";
   if (diffMin < 60) return `${diffMin}m ago`;
@@ -176,8 +178,16 @@ interface PlatformEntry {
   serviceName: string | null;
 }
 
-/** Renders the platforms_json cell — clickable hostname(s), falls back to "—" when nothing's been ingested yet (not an error state, just unmeasured, same as other NULL-until-ingested fields). */
-function renderPlatformsCell(platformsJson: string | null): string {
+/**
+ * Renders the platforms_json cell. The platform name itself links to the
+ * merchant's internal profile page (`profileHref`) per the 2026-08-18 ask
+ * ("accessible by clicking on either their platform name or wallet") —
+ * previously it linked straight out to the external resource URL, which is
+ * still one click away via the small ↗ icon so that path isn't lost.
+ * Falls back to "—" when nothing's been ingested yet (not an error state,
+ * just unmeasured, same as other NULL-until-ingested fields).
+ */
+function renderPlatformsCell(platformsJson: string | null, profileHref: string): string {
   if (!platformsJson) return '<span class="pill pill-muted">—</span>';
   let platforms: PlatformEntry[];
   try {
@@ -196,28 +206,31 @@ function renderPlatformsCell(platformsJson: string | null): string {
       // Not a parseable absolute URL — show the raw string as-is rather than failing.
     }
     const label = escapeHtml(p.serviceName || hostname);
-    return `<a href="${escapeHtml(p.url)}" target="_blank" rel="noopener" title="${escapeHtml(p.url)}">${label}</a>`;
+    return (
+      `<a href="${profileHref}" title="View merchant profile">${label}</a>` +
+      `<a class="ext-link" href="${escapeHtml(p.url)}" target="_blank" rel="noopener" title="Open ${escapeHtml(p.url)}">↗</a>`
+    );
   });
   const shown = links.slice(0, 1).join("");
   const extra = links.length > 1 ? ` <span class="pill pill-muted">+${links.length - 1} more</span>` : "";
   return shown + extra;
 }
 
-/** 'proceed' | 'caution' | 'insufficient' — used for both the CSS class suffix and the data-recommendation filter attribute. */
-function recommendationSlug(rec: Recommendation): string {
+/** 'proceed' | 'caution' | 'insufficient' — used for both the CSS class suffix and the data-recommendation filter attribute. Exported so src/merchantProfile.ts's badge matches the dashboard's exactly. */
+export function recommendationSlug(rec: Recommendation): string {
   if (rec === "PROCEED") return "proceed";
   if (rec === "CAUTION") return "caution";
   return "insufficient";
 }
 
-function recommendationLabel(rec: Recommendation): string {
+export function recommendationLabel(rec: Recommendation): string {
   if (rec === "PROCEED") return "Proceed";
   if (rec === "CAUTION") return "Caution";
   return "Insufficient signal";
 }
 
-/** Own advertised price(s) — a range if the wallet backs multiple resources at different prices — plus a fairness pill against category peers, when computable. Both were already collected every refresh cycle and simply never surfaced before 2026-08-13. */
-function renderPriceCell(pricesAtomic: number[], fairness: PriceFairness): string {
+/** Own advertised price(s) — a range if the wallet backs multiple resources at different prices — plus a fairness pill against category peers, when computable. Both were already collected every refresh cycle and simply never surfaced before 2026-08-13. Exported so src/merchantProfile.ts's price section renders identically instead of a second copy. */
+export function renderPriceCell(pricesAtomic: number[], fairness: PriceFairness): string {
   if (pricesAtomic.length === 0) return '<span class="pill pill-muted">—</span>';
   const usd = pricesAtomic.map((p) => p / 1_000_000);
   const min = Math.min(...usd);
@@ -228,8 +241,8 @@ function renderPriceCell(pricesAtomic: number[], fairness: PriceFairness): strin
   return `${escapeHtml(priceLabel)}${fairnessPill}`;
 }
 
-/** Small inline label appended to the payer count — surfaces payer_concentration without a whole extra column. */
-function payerConcentrationLabel(concentration: PayerConcentration): string {
+/** Small inline label appended to the payer count — surfaces payer_concentration without a whole extra column. Exported so src/merchantProfile.ts reuses it. */
+export function payerConcentrationLabel(concentration: PayerConcentration): string {
   if (concentration === "UNKNOWN") return "";
   return ` <span class="pill-muted small">${escapeHtml(concentration.toLowerCase())} conc.</span>`;
 }
@@ -252,14 +265,15 @@ export function renderDashboardHtml(data: DashboardData): string {
       // hover — recommendation is the primary, product-facing label per the
       // pre-payment-primitive rework (see INTEGRATION.md); trust_tier is
       // supplementary, not hidden, just not the headline.
+      const profileHref = `/merchant/${encodeURIComponent(r.wallet_address)}`;
       return `<tr data-recommendation="${recSlug}" data-category="${category}" data-chain="${chain}" data-address="${escapeHtml(r.wallet_address)}">
-        <td><code class="addr" title="${escapeHtml(r.wallet_address)}">${truncateAddress(r.wallet_address)}</code></td>
+        <td><a class="addr-link" href="${profileHref}" title="View merchant profile"><code class="addr">${truncateAddress(r.wallet_address)}</code></a></td>
         <td><span class="pill pill-chain">${chain}</span></td>
         <td>
           <span class="badge badge-${recSlug}" title="trust_tier: ${escapeHtml(r.tier.toUpperCase())}">${recommendationLabel(r.recommendation)}</span>
           <span class="pill-muted small">${escapeHtml(r.confidence.toLowerCase())} confidence</span>
         </td>
-        <td>${renderPlatformsCell(r.platforms_json)}</td>
+        <td>${renderPlatformsCell(r.platforms_json, profileHref)}</td>
         <td><span class="pill">${escapeHtml(category.replace(/_/g, " "))}</span></td>
         <td>${renderPriceCell(r.ownPricesAtomic, r.priceFairness)}</td>
         <td class="num">${r.total_tx_count.toLocaleString()}</td>
@@ -360,6 +374,10 @@ ${FONT_LINKS}
   .pill-fairness-low { color: var(--accent); border-color: var(--accent); }
   td a { color: var(--accent); text-decoration: none; }
   td a:hover { text-decoration: underline; }
+  a.addr-link code.addr { color: var(--accent); }
+  a.addr-link:hover code.addr { text-decoration: underline; }
+  a.ext-link { margin-left: .3rem; font-size: .78rem; opacity: .6; }
+  a.ext-link:hover { opacity: 1; }
   select#category-filter, select#chain-filter {
     padding: .45rem .7rem; border-radius: 8px; border: 1px solid var(--border);
     background: var(--surface); color: var(--text); font-size: .82rem;
