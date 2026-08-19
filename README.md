@@ -111,6 +111,67 @@ section shipped with):
    link**, it can't be done programmatically. Until that's clicked, mail to
    `info@` won't actually forward.
 
+## Additional payment protocols (researched 2026-08-19)
+
+Prompted by Cloudflare's Agent Readiness "Commerce" checklist (ACP, AP2,
+MPP, UCP, x402) — the user explicitly said they don't care which protocol
+gets used, just that agents can actually pay, so each was researched
+against its real spec (not assumed) before deciding.
+
+**Shipped**: `GET /check` (`src/httpCheckEndpoint.ts`) — a plain-HTTP x402
+mirror of `check_merchant`, reusing the exact same facilitator/settlement
+path as `/mcp`. See that file's module comment for the full reasoning;
+short version, the MCP path's 402 challenge lives inside a JSON-RPC
+response body, invisible to any plain HTTP client (including Cloudflare's
+own scanner) that just sends a bare GET.
+
+**Researched, not implemented**:
+- **ACP** (Agentic Commerce Protocol — OpenAI/Stripe) and **UCP**
+  (Universal Commerce Protocol — Google/Shopify/Etsy/Walmart): both are
+  full retail-checkout standards — cart construction, delegated payment
+  tokens, tax/shipping, returns, credential providers like Google Pay.
+  Built for buying *products* from a *catalog*, not paying per metered API
+  call. Confirmed via their actual specs (agenticcommerce.dev,
+  developers.openai.com/commerce, orkes.io/blog/universal-commerce-protocol-ucp-explained)
+  — the shape mismatch is structural, not a matter of more implementation
+  effort.
+- **AP2** (Agent Payments Protocol — Google/PayPal): genuinely does support
+  MCP as a transport, not only A2A as Cloudflare's scanner implies. Its
+  core mechanic is cryptographically signed "mandates" — verifiable proof
+  of a *user's* delegated purchase authority to an agent. Real and
+  interesting, but solves a different problem (delegated consent for agent
+  shopping on a user's behalf) than this service's model (an agent pays
+  directly, no user-delegation layer needed). A proper project on its own,
+  not a same-session addition.
+- **MPP** (Machine Payments Protocol — Tempo/Stripe, mpp.dev): the closest
+  conceptual fit — its own docs describe it for "paying for an API call...
+  buying access to data," and its `usdc` charge method uses **EIP-3009
+  transferWithAuthorization**, the same signing primitive x402's `exact`
+  scheme already uses. The blocker: MPP's spec has **no facilitator
+  model** — unlike x402 (Coinbase's CDP facilitator submits/settles for
+  us, never touching a private key on our side), MPP expects the
+  *merchant's own server* to submit the transaction on-chain and pay gas
+  directly. Real implementation needs:
+  1. A dedicated EVM wallet funded with ETH for gas, held as a new secret
+     — a genuinely new operational responsibility (keeping it funded),
+     unlike x402 where we never custody signing keys.
+  2. Server-side relayer code: parse the `Authorization: Payment`
+     credential, submit the `transferWithAuthorization` call via an RPC
+     provider, poll for confirmation, handle retries/failures.
+  3. A real security review before shipping — this is direct-custody,
+     money-moving code, categorically different from x402's
+     facilitator-mediated model.
+  4. `WWW-Authenticate: Payment` / `Authorization: Payment` header
+     handling (RFC draft-ryan-httpauth-payment) alongside the existing
+     x402 headers.
+
+  This is a multi-day infrastructure project (wallet funding, relayer,
+  monitoring, security review), not a config change. **Recommendation**:
+  revisit once `GET /check` or `/mcp` traffic shows real organic demand —
+  `query_log` currently shows near-zero organic paid usage (see caller
+  analytics), so a second payment rail isn't justified yet. Tracked here
+  as a real roadmap item, not dropped.
+
 ## Categorization
 
 Additive to trust-tier scoring, doesn't touch `src/scoring.ts`. Every
