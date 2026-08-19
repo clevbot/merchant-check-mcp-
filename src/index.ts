@@ -49,6 +49,23 @@ import {
  * was dropped: @x402/mcp is built against @modelcontextprotocol/sdk
  * directly, and mixing it with `agents`' own McpServer wrapper wasn't worth
  * the risk of an unproven combination in payment-handling code.
+ *
+ * Revisited 2026-08-19, asked directly ("should we have used a Cloudflare
+ * SDK to build the server?"): still the right call, now checked against
+ * Cloudflare's real docs rather than assumption. `McpAgent` is stateful,
+ * backed by a Durable Object *per session*, state resets when the session
+ * ends — this server has no session state at all (every check_merchant
+ * call is independent), so that would add DO overhead for nothing.
+ * `createMcpHandler` (the actual "initial plan" above) is the closer
+ * comparison — stateless, no DOs — and might have saved a little transport
+ * boilerplate, but neither option is designed to own routing alongside a
+ * pile of unrelated plain-HTTP routes on the same Worker (`/check`,
+ * `/robots.txt`, `/sitemap.xml`, `/auth.md`, three `/.well-known/mcp*`
+ * paths, the homepage, `/privacy`), all of which now live as simple
+ * pathname branches with zero friction. And the original payment-handling
+ * caution has since paid for itself: this hand-rolled path has completed
+ * multiple real settled mainnet payments end to end. Not worth re-risking
+ * a proven path now for marginal boilerplate savings.
  */
 
 /** Must match the second cron expression in wrangler.toml's [triggers]. */

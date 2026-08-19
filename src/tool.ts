@@ -1,3 +1,4 @@
+import { tracing } from "cloudflare:workers";
 import { LOW_PAYER_DIVERSITY_RATIO, MIN_PAYERS_FOR_BREADTH_OVERRIDE, MIN_TX_FOR_CONFIDENCE, median, scoreMerchant, scorePriceFairness } from "./scoring";
 import { getComparablePrices, getMerchantSignals, getOwnPrices } from "./db/queries";
 import { isMerchantCategory } from "./categorize/types";
@@ -107,7 +108,47 @@ export function derivePayerConcentration(uniquePayers: number, totalTxCount: num
  * (trust_tier, signals, risk_flags, reasons) is supporting detail for
  * policies that want more than the three-way split.
  */
-export async function checkMerchant(
+/**
+ * Cloudflare agent tracing (2026-08-19, https://developers.cloudflare.com/agent-setup/tracing.md)
+ * — this project has no Think/Flue/AI SDK agent loop (see the "Revisited
+ * 2026-08-19" addendum on the MCP-stack comment near the top of
+ * src/index.ts for why not, and why that's the right call), so it falls
+ * into the doc's "Custom" bucket: instrument
+ * with the Workers custom spans API directly. `invoke_agent`/`tool_approval`
+ * don't apply here (there's no multi-step reasoning turn happening in this
+ * Worker — a caller *is* the agent; we're the tool it calls), but
+ * `execute_tool` is an exact fit: this function *is* the tool execution the
+ * whole system exists to sell. See src/categorize/model.ts's `chat` span
+ * for the one genuine LLM call in this codebase.
+ *
+ * Attributes are deliberately non-identifying-of-the-caller: merchant
+ * wallet address, chain, category, and recommendation are already
+ * disclosed/logged elsewhere (query_log, the privacy policy's "merchant
+ * wallet data" section) and describe the *merchant* being evaluated, a
+ * public on-chain identity, not the caller. The caller's own wallet
+ * address is captured separately (query_log.payer_address via
+ * onAfterSettlement / GET /check's settlement) and deliberately kept out
+ * of trace attributes here, since this function never sees it.
+ */
+export async function checkMerchant(env: Env, input: CheckMerchantInput): Promise<CheckMerchantOutput> {
+  return tracing.enterSpan("execute_tool", async (span) => {
+    span.setAttributes({
+      "gen_ai.operation.name": "execute_tool",
+      "gen_ai.tool.name": "check_merchant",
+    });
+    const output = await checkMerchantImpl(env, input);
+    span.setAttributes({
+      "check_merchant.merchant_wallet_address": output.merchant,
+      "check_merchant.chain": output.chain ?? "unknown",
+      "check_merchant.category": output.category ?? "unknown",
+      "check_merchant.recommendation": output.recommendation,
+      "check_merchant.data_sufficiency": output.data_sufficiency,
+    });
+    return output;
+  });
+}
+
+async function checkMerchantImpl(
   env: Env,
   input: CheckMerchantInput,
 ): Promise<CheckMerchantOutput> {

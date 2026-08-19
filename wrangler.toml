@@ -44,6 +44,24 @@ enabled = true
 invocation_logs = true
 
 # ---------------------------------------------------------------------------
+# Agent tracing (2026-08-19, per
+# https://developers.cloudflare.com/agent-setup/tracing.md). This project
+# has no Think/Flue/AI SDK agent loop (see src/index.ts's "Revisited
+# 2026-08-19" comment for the real architecture reasoning), so it's
+# instrumented with the Workers custom spans API directly rather than a
+# framework auto-instrumentation hook — see src/tool.ts's `execute_tool`
+# span (check_merchant, the tool this whole system exists to sell) and
+# src/categorize/model.ts's `chat` span (the one genuine LLM call in this
+# codebase, the pass-2 categorization fallback). No sampling_rate set —
+# defaults to 100%, appropriate given real traffic volume is still low
+# enough that sampling would just lose signal, not save cost. Free while
+# in beta; billed under existing Workers Observability pricing from
+# 2026-10-01 per Cloudflare's own docs.
+# ---------------------------------------------------------------------------
+[observability.traces]
+enabled = true
+
+# ---------------------------------------------------------------------------
 # Custom domains. gradientdecisions.com is already a Cloudflare zone on this
 # account, so `custom_domain = true` provisions the DNS record + SSL cert
 # automatically on deploy — no manual CNAME needed.

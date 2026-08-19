@@ -1,3 +1,4 @@
+import { tracing } from "cloudflare:workers";
 import { CATEGORIES, isMerchantCategory, type MerchantCategory } from "./types";
 import type { Env } from "../types";
 
@@ -22,6 +23,32 @@ export interface ModelClassification {
  * not-confidently-classified description.
  */
 export async function categorizeByModel(
+  description: string,
+  env: Env,
+): Promise<ModelClassification> {
+  // Cloudflare agent tracing (2026-08-19) — the one genuine LLM call in
+  // this codebase, so the one place a `chat` span (per the OTel GenAI
+  // convention the tracing doc defers to) is a clean, unambiguous fit,
+  // unlike check_merchant's `execute_tool` span (src/tool.ts), which
+  // required more judgment since this Worker isn't itself an agent.
+  // Attributes are usage/outcome metadata only — the listing description
+  // and model output text are never attached to the span, same
+  // metadata-only default applied to check_merchant's span.
+  return tracing.enterSpan("chat", async (span) => {
+    span.setAttributes({
+      "gen_ai.operation.name": "chat",
+      "gen_ai.request.model": MODEL,
+      "gen_ai.system": "anthropic",
+    });
+    const result = await categorizeByModelImpl(description, env);
+    span.setAttributes({
+      "categorize.outcome": result.category ? "classified" : result.unparseable ? "unparseable" : "call_failed",
+    });
+    return result;
+  });
+}
+
+async function categorizeByModelImpl(
   description: string,
   env: Env,
 ): Promise<ModelClassification> {
