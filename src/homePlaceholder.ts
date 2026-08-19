@@ -217,8 +217,13 @@ ${FIGMA_FONT_LINKS}
     letter-spacing: .06em; text-transform: uppercase; padding: .35rem .85rem; border-radius: var(--r-pill);
     border: 1px solid currentColor;
   }
-  .tag.peach { background: var(--accent-tint); color: var(--accent-ink); border-color: var(--accent); }
-  .tag.pink { background: var(--accent2-tint); color: var(--accent2-ink); border-color: var(--accent2); }
+  /* Translucent-white pill treatment (not a flat tint) — these badges spend
+     most of their life sitting directly on .gradient-wrap's pink/orange
+     background now, not a plain page background, so they need real fill
+     contrast rather than an 8%-opacity tint that would nearly disappear
+     against an already-colored backdrop. */
+  .tag.peach { background: rgba(255,255,255,.5); color: #7c2d12; border-color: rgba(17,24,39,.18); }
+  .tag.pink { background: rgba(255,255,255,.5); color: #9d174d; border-color: rgba(17,24,39,.18); }
 
   .btn {
     display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
@@ -226,7 +231,10 @@ ${FIGMA_FONT_LINKS}
     padding: .7rem 1.3rem; border-radius: var(--r-md); border: 1px solid transparent; cursor: pointer;
   }
   .btn-primary { background: #ffffff; color: #111827; border-color: rgba(17,24,39,.18); }
-  .btn-secondary { background: transparent; color: var(--text); border-color: var(--border); }
+  /* Translucent white, not fully transparent — same reasoning as .tag above:
+     a hairline var(--border) outline alone would barely register against
+     the gradient. */
+  .btn-secondary { background: rgba(255,255,255,.4); color: #111827; border-color: rgba(17,24,39,.22); }
 
   section { padding: 4.5rem 1.5rem; }
   .inner { max-width: 1120px; margin: 0 auto; }
@@ -243,20 +251,23 @@ ${FIGMA_FONT_LINKS}
   nav.topnav .navlinks a { color: var(--text-body); text-decoration: none; }
   nav.topnav .navlinks a:hover { color: var(--text); }
   nav.topnav .navright { display: flex; align-items: center; gap: 1.25rem; }
-  nav.topnav .navright > a.docslink { font-size: .9rem; color: var(--text-body); text-decoration: none; }
   @media (max-width: 720px) { nav.topnav .navlinks { display: none; } }
 
-  /* Same pink-to-orange gradient as the logo mark (#fbcfe8 -> #fdba74), applied
-     as the hero band's background. The hero's own text/tag/secondary-button
-     colors below are hardcoded (not the shared --text/--text-dim/--border
-     tokens) since they're tuned for contrast against this specific light
-     gradient, not just inherited page defaults. */
-  .hero { text-align: center; padding-top: 5.5rem; padding-bottom: 3.5rem; background: linear-gradient(120deg, #fbcfe8 0%, #fdba74 100%); }
-  .hero h1 { font-size: clamp(2.1rem, 5.5vw, 3.4rem); font-weight: 800; line-height: 1.08; max-width: 820px; margin: 1.25rem auto 1.25rem; color: #111827; }
-  .hero p.lede { max-width: 620px; margin: 0 auto 2rem; color: #57433a; font-size: 1.05rem; }
+  /* Same pink-to-orange gradient as the logo mark (#fbcfe8 -> #fdba74),
+     stretched across the wrapper spanning hero through the CTA section
+     (see the HTML below) rather than confined to the hero band alone —
+     "let's see what it looks like if applied to most of the landing page".
+     The wrap's own height comes from its content (no fixed-position/
+     viewport tricks needed): a block-level gradient background simply
+     fills whatever height its container renders at. Nav and footer stay
+     outside it — a plain nav (readable while sticky-scrolling over
+     everything below it) and a plain footer (a clear resting point at the
+     end) both read better solid than mid-gradient. */
+  .gradient-wrap { background: linear-gradient(90deg, #fbcfe8 0%, #fdba74 100%); }
+  .hero { text-align: center; padding-top: 5.5rem; padding-bottom: 3.5rem; }
+  .hero h1 { font-size: clamp(2.1rem, 5.5vw, 3.4rem); font-weight: 800; line-height: 1.08; max-width: 820px; margin: 1.25rem auto 1.25rem; }
+  .hero p.lede { max-width: 620px; margin: 0 auto 2rem; color: var(--text-dim); font-size: 1.05rem; }
   .hero .cta-row { display: flex; gap: .85rem; justify-content: center; flex-wrap: wrap; }
-  .hero .tag.peach { background: rgba(255,255,255,.45); color: #7c2d12; border-color: rgba(17,24,39,.2); }
-  .hero .btn-secondary { color: #111827; border-color: rgba(17,24,39,.25); }
 
   .workflow-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1rem; }
   .step-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 1.25rem; }
@@ -289,7 +300,12 @@ ${FIGMA_FONT_LINKS}
   .code-window .filename { font-family: "Geist Mono", monospace; font-size: .75rem; color: var(--text-dim); }
   .code-window pre { margin: 0; padding: 1.1rem 1.2rem; font-family: "Geist Mono", monospace; font-size: .8rem; line-height: 1.6; overflow-x: auto; color: var(--text-body); }
 
-  .stats-band { background: var(--bg-muted); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 3rem 1.5rem; }
+  /* Translucent white wash, not the old opaque --bg-muted fill — the dense
+     numbers here (and --accent2-ink's maroon tone specifically, which is
+     close enough to the gradient's own pink to lose definition without
+     help) need more separation from .gradient-wrap's background than the
+     lighter card/tag treatment elsewhere on this band. */
+  .stats-band { background: rgba(255,255,255,.6); border-top: 1px solid rgba(17,24,39,.1); border-bottom: 1px solid rgba(17,24,39,.1); padding: 3rem 1.5rem; }
   .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1.5rem; text-align: center; }
   .stats-grid .n { font-family: "Gabarito", sans-serif; font-size: clamp(1.6rem, 3vw, 2.2rem); font-weight: 800; color: var(--accent2-ink); }
   .stats-grid .n.proceed { color: var(--proceed); }
@@ -324,7 +340,7 @@ ${FIGMA_FONT_LINKS}
   .merchant-card .m-reasons li::before { content: "—"; position: absolute; left: 0; color: var(--text-dim); }
   .merchants-note { font-size: .8rem; color: var(--text-dim); margin-top: 1.5rem; max-width: 70ch; }
 
-  .cta-section { text-align: center; background: var(--bg-soft); }
+  .cta-section { text-align: center; }
   .cta-section h2 { font-size: clamp(1.7rem, 4vw, 2.4rem); font-weight: 800; max-width: 640px; margin: 1rem auto 1rem; }
   .cta-section p { color: var(--text-dim); max-width: 520px; margin: 0 auto 2rem; }
   .cta-section .cta-row { display: flex; gap: .85rem; justify-content: center; flex-wrap: wrap; }
@@ -349,11 +365,11 @@ ${FIGMA_FONT_LINKS}
     <a href="/auth.md">Docs</a>
   </div>
   <div class="navright">
-    <a class="docslink" href="/auth.md">Docs</a>
     <a class="btn btn-primary" href="#integrate">Get Started</a>
   </div>
 </nav>
 
+<div class="gradient-wrap">
 <section class="hero">
   <div class="inner">
     <span class="tag peach">PRE-PAYMENT TRUST LAYER FOR X402</span>
@@ -365,7 +381,7 @@ ${FIGMA_FONT_LINKS}
     </p>
     <div class="cta-row">
       <a class="btn btn-primary" href="#integrate">Start Integrating</a>
-      <a class="btn btn-secondary" href="/auth.md">View Docs</a>
+      <a class="btn btn-secondary" href="#how-it-works">See How It Works</a>
     </div>
   </div>
 </section>
@@ -478,6 +494,7 @@ ${FIGMA_FONT_LINKS}
     </div>
   </div>
 </section>
+</div>
 
 <footer class="sitefoot">
   <div class="inner">
