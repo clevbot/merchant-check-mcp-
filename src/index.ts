@@ -371,11 +371,17 @@ function createServer(env: Env, accepts: PaymentRequirements[], resourceServer: 
 }
 
 // Domain-ownership proof for the official MCP Registry's HTTP auth method
-// (docs/authentication.mdx "HTTP Authentication") — lets mcp-publisher
-// authenticate as gradientdecisions.com without any GitHub OAuth. The
-// corresponding private key lives only in this session's scratchpad, never
-// committed; this public value is the whole point of being public.
-const MCP_REGISTRY_AUTH_RECORD = "v=MCPv1; k=ed25519; p=qoOP77GDo1BCijstKpdrVMh0ldDT5gh2ilyR4SslUtY=\n";
+// (registry.modelcontextprotocol.io docs, "authentication.mdx" — HTTP
+// Authentication) — lets mcp-publisher authenticate as gradientdecisions.com
+// without any GitHub OAuth. Regenerated 2026-08-19 (ECDSA P-384, not
+// Ed25519 — this machine's system LibreSSL can't do Ed25519 `genpkey`; the
+// docs explicitly note ECDSA P-384 as the LibreSSL-compatible codepath):
+// the original Ed25519 keypair from an earlier session lived only in that
+// session's now-gone scratchpad, never committed, so it's unrecoverable —
+// this replaces it start to finish. The corresponding private key lives
+// only in this session's scratchpad, never committed; this public value is
+// the whole point of being public.
+const MCP_REGISTRY_AUTH_RECORD = "v=MCPv1; k=ecdsap384; p=A1x6E59tTy72t7Bg198j/9B2WiOSjJ37t7/i7zvU2Ht52t9i5kdgR9rz8RkOIaIMZA==\n";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
