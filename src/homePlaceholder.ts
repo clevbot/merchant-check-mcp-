@@ -228,7 +228,7 @@ ${FIGMA_FONT_LINKS}
     font-family: "Gabarito", sans-serif; font-weight: 600; font-size: .92rem; text-decoration: none;
     padding: .7rem 1.3rem; border-radius: var(--r-md); border: 1px solid transparent; cursor: pointer;
   }
-  .btn-primary { background: var(--accent); color: #111827; }
+  .btn-primary { background: #ffffff; color: #111827; border-color: rgba(17,24,39,.18); }
   .btn-secondary { background: transparent; color: var(--text); border-color: var(--border); }
 
   section { padding: 4.5rem 1.5rem; }
@@ -249,10 +249,16 @@ ${FIGMA_FONT_LINKS}
   nav.topnav .navright > a.docslink { font-size: .9rem; color: var(--text-body); text-decoration: none; }
   @media (max-width: 720px) { nav.topnav .navlinks { display: none; } }
 
-  .hero { text-align: center; padding-top: 5.5rem; padding-bottom: 3.5rem; }
-  .hero h1 { font-size: clamp(2.1rem, 5.5vw, 3.4rem); font-weight: 800; line-height: 1.08; max-width: 820px; margin: 1.25rem auto 1.25rem; }
-  .hero p.lede { max-width: 620px; margin: 0 auto 2rem; color: var(--text-dim); font-size: 1.05rem; }
+  /* Same pink-to-orange gradient as the logo mark (#fbcfe8 -> #fdba74), applied
+     as the hero band's background — fixed, not theme-dependent, so the hero's
+     own text/tag/button colors below are hardcoded to values that stay legible
+     against this light gradient regardless of site-wide light/dark mode. */
+  .hero { text-align: center; padding-top: 5.5rem; padding-bottom: 3.5rem; background: linear-gradient(120deg, #fbcfe8 0%, #fdba74 100%); }
+  .hero h1 { font-size: clamp(2.1rem, 5.5vw, 3.4rem); font-weight: 800; line-height: 1.08; max-width: 820px; margin: 1.25rem auto 1.25rem; color: #111827; }
+  .hero p.lede { max-width: 620px; margin: 0 auto 2rem; color: #57433a; font-size: 1.05rem; }
   .hero .cta-row { display: flex; gap: .85rem; justify-content: center; flex-wrap: wrap; }
+  .hero .tag.peach { background: rgba(255,255,255,.45); color: #7c2d12; border-color: rgba(17,24,39,.2); }
+  .hero .btn-secondary { color: #111827; border-color: rgba(17,24,39,.25); }
 
   .workflow-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1rem; }
   .step-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 1.25rem; }
