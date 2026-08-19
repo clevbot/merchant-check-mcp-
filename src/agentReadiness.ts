@@ -242,6 +242,10 @@ x402 Merchant Check has no accounts, no API keys, and no OAuth. There is nothing
 
 Every call to the \`check_merchant\` MCP tool is authenticated by payment itself, per the [x402 protocol](https://x402.org): each request is paid for individually, on-chain, in USDC on Base mainnet. There's no session and no token beyond the payment itself.
 
+## Registration
+
+There is no registration step. No sign-up form, no account creation, no API key issuance, nothing to do in advance. Payment (see below) is the entire authentication mechanism — an agent goes from "never seen this service before" to "successfully authenticated and paid" in one HTTP round-trip.
+
 ## How it works
 
 1. Call \`check_merchant\` on \`${MCP_ORIGIN}/mcp\` with a \`merchant_wallet_address\`.
