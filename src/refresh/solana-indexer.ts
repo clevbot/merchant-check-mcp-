@@ -146,8 +146,45 @@ export class PayAIDataSource implements ChainDataSource {
 
   async listActiveMerchants(sinceUnixSeconds: number): Promise<string[]> {
     this.cache.clear();
-    let offset = 0;
-    for (let page = 0; page < MAX_PAGES; page++) {
+
+    // Page 0 is always scanned fresh (cheap, and gives pagination.total —
+    // we don't know the real catalog size ahead of time).
+    const firstRes = await fetch(`${PAYAI_DISCOVERY_URL}?limit=${PAGE_SIZE}&offset=0`, {
+      headers: { Accept: "application/json" },
+    });
+    if (!firstRes.ok) {
+      throw new Error(`PayAI discovery request failed: ${firstRes.status} ${firstRes.statusText}`);
+    }
+    const firstBody = (await firstRes.json()) as DiscoveryListResponse;
+    for (const item of firstBody.items) {
+      this.ingestItem(item);
+    }
+    const total = firstBody.pagination.total;
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+    // Rotate which of the REMAINING (MAX_PAGES - 1) pages get scanned each
+    // cycle — added 2026-08-18 after a real, confirmed finding: this always
+    // started at offset 0 and scanned the same fixed MAX_PAGES window every
+    // single cycle, forever. PayAI's real catalog is ~26,000+ items (checked
+    // live), far bigger than one cycle's budget — a fixed window landed on
+    // a couple of merchants each backing ~100 near-duplicate resource
+    // listings (not real breadth), so total unique Solana merchants
+    // discovered stayed flat at ~34-36 across many refresh cycles despite
+    // "scanning 500 items" every time. Now every cycle covers a different
+    // slice, so new merchants keep surfacing over time instead of the same
+    // ones forever — though at MAX_PAGES pages/cycle on a 4h cadence, a
+    // full sweep of a ~26,000-item catalog takes weeks, not days; this
+    // fixes staleness/repetition, it does not make discovery instant.
+    const remainingPageBudget = MAX_PAGES - 1;
+    const rotatablePages = Math.max(1, totalPages - 1); // excludes page 0, already covered above
+    const cycleSeconds = 4 * 60 * 60; // matches wrangler.toml's refresh cron cadence
+    const epoch = Math.floor(Date.now() / 1000 / cycleSeconds);
+    const startIndex = epoch % rotatablePages;
+
+    for (let i = 0; i < remainingPageBudget; i++) {
+      const pageNum = 1 + ((startIndex + i) % rotatablePages);
+      const offset = pageNum * PAGE_SIZE;
+      if (offset >= total) continue;
       const res = await fetch(`${PAYAI_DISCOVERY_URL}?limit=${PAGE_SIZE}&offset=${offset}`, {
         headers: { Accept: "application/json" },
       });
@@ -158,8 +195,6 @@ export class PayAIDataSource implements ChainDataSource {
       for (const item of body.items) {
         this.ingestItem(item);
       }
-      offset += PAGE_SIZE;
-      if (offset >= body.pagination.total || body.items.length === 0) break;
     }
 
     // .trim() defensively: a `wrangler secret put` value pasted with a
