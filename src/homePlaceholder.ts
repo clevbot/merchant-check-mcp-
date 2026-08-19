@@ -165,6 +165,14 @@ function renderFeaturedMerchantCard(m: FeaturedMerchant): string {
       <span class="m-signal">${m.confidence.toLowerCase()} confidence</span>
       ${priceLine}
     </div>
+    ${
+      m.reasons.length > 0
+        ? `<div class="m-reasons">
+      <span class="m-reasons-label">Why</span>
+      <ul>${m.reasons.map((r) => `<li>${r}</li>`).join("")}</ul>
+    </div>`
+        : ""
+    }
   </div>`;
 }
 
@@ -309,6 +317,11 @@ ${FIGMA_FONT_LINKS}
   .m-fairness-fair { color: var(--proceed); }
   .m-fairness-high { color: var(--caution); }
   .m-fairness-low { color: var(--accent2-ink); }
+  .merchant-card .m-reasons { margin-top: 1rem; padding-top: .9rem; border-top: 1px solid var(--border); }
+  .merchant-card .m-reasons-label { font-family: "Geist Mono", monospace; font-size: .68rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); }
+  .merchant-card .m-reasons ul { list-style: none; margin: .45rem 0 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
+  .merchant-card .m-reasons li { font-size: .82rem; color: var(--text-body); padding-left: .9rem; position: relative; }
+  .merchant-card .m-reasons li::before { content: "—"; position: absolute; left: 0; color: var(--text-dim); }
   .merchants-note { font-size: .8rem; color: var(--text-dim); margin-top: 1.5rem; max-width: 70ch; }
 
   .cta-section { text-align: center; background: var(--bg-soft); }
