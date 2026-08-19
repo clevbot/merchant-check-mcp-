@@ -151,12 +151,6 @@ ${FONT_LINKS}
     <p>Tool: <code>check_merchant</code> — $0.01 per query, paid via x402 on Base mainnet.</p>
   </div>
 
-  <div class="card">
-    <h2>For humans</h2>
-    <p>A browsable per-merchant dashboard is on the way. In the meantime, questions can go to
-      <a href="/privacy">the privacy policy</a>'s contact address.</p>
-  </div>
-
   <footer>
     <div class="footer-brand">${renderWordmark("home-footer", 120)}</div>
     <a href="/privacy">Privacy policy</a>.
