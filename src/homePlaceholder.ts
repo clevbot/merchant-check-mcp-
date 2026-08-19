@@ -480,7 +480,7 @@ ${FIGMA_FONT_LINKS}
     <p>Add Gradient Decisions to your agent's MCP config in under five minutes. Every check is $0.01, paid the same way as the payment it's protecting.</p>
     <div class="cta-row">
       <a class="btn btn-primary" href="#integrate">Integrate MCP Server Now</a>
-      <a class="btn btn-secondary" href="/auth.md">Read the Docs</a>
+      <a class="btn btn-secondary" href="/methodology.md">Read the Docs</a>
     </div>
   </div>
 </section>

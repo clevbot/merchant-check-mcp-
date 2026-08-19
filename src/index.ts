@@ -25,6 +25,7 @@ import {
   SAMPLE_CHECK_MERCHANT_OUTPUT,
   renderApiCatalogJson,
   renderAuthMd,
+  renderMethodologyMd,
   renderHomeMarkdown,
   renderMcpServerCardJson,
   renderSitemapXml,
@@ -546,6 +547,14 @@ export default {
     }
     if (url.pathname === "/auth.md") {
       return new Response(renderAuthMd(), {
+        headers: { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "public, max-age=3600" },
+      });
+    }
+    // Prose scoring explainer for a human evaluator, cross-linked with
+    // auth.md (protocol mechanics for an integrating agent) — see
+    // src/agentReadiness.ts's renderMethodologyMd for the full reasoning.
+    if (url.pathname === "/methodology.md") {
+      return new Response(renderMethodologyMd(), {
         headers: { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "public, max-age=3600" },
       });
     }

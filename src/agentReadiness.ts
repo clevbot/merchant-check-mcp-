@@ -125,6 +125,7 @@ export function renderMcpServerCardJson(): string {
     links: {
       apiCatalog: `${SITE_ORIGIN}/.well-known/api-catalog`,
       auth: `${SITE_ORIGIN}/auth.md`,
+      methodology: `${SITE_ORIGIN}/methodology.md`,
       privacy: `${SITE_ORIGIN}/privacy`,
       stats: SITE_ORIGIN,
     },
@@ -238,6 +239,8 @@ export const API_CATALOG_LINK_HEADER = `</.well-known/api-catalog>; rel="api-cat
 export function renderAuthMd(): string {
   return `# Auth.md — Authentication
 
+Payment/protocol mechanics only — for how the trust score itself is computed, see [methodology.md](${SITE_ORIGIN}/methodology.md).
+
 x402 Merchant Check has no accounts, no API keys, and no OAuth. There is nothing to register or log into.
 
 Every call to the \`check_merchant\` MCP tool is authenticated by payment itself, per the [x402 protocol](https://x402.org): each request is paid for individually, on-chain, in USDC on Base mainnet. There's no session and no token beyond the payment itself.
@@ -275,6 +278,82 @@ ${JSON.stringify(SAMPLE_CHECK_MERCHANT_OUTPUT, null, 2)}
 
 - API catalog: [\`/.well-known/api-catalog\`](${SITE_ORIGIN}/.well-known/api-catalog)
 - Aggregate stats (no auth needed): [\`${SITE_ORIGIN}/\`](${SITE_ORIGIN}/) (send \`Accept: text/markdown\` for a plain-text version)
+`;
+}
+
+/**
+ * `/methodology.md` (2026-08-19) — added after a direct product question:
+ * the landing page's "Read the Docs" button pointed at auth.md, which only
+ * explains x402 payment mechanics (how to call/pay/retry). It never
+ * explained the actual thing a human clicking "Docs" from a landing page
+ * wants to understand first — why the tier/recommendation should be
+ * trusted at all. This is that doc: a prose walkthrough of scoring, aimed
+ * at a human evaluator, not an integrating agent. auth.md stays exactly as
+ * it was (protocol mechanics, agent-facing) — this doesn't replace it,
+ * they're cross-linked.
+ *
+ * Every number/threshold/signal description below is pulled directly from
+ * src/scoring.ts and src/tool.ts, not paraphrased from memory — including
+ * the honest bits (two of six signals are currently dormant, one is
+ * stubbed). If those files' thresholds change, this doc goes stale; there's
+ * no shared-constant mechanism forcing the two to match (scoring.ts's
+ * constants are all internal, not exported for display purposes), so it's
+ * on whoever changes scoring.ts next to also update this file's prose.
+ */
+export function renderMethodologyMd(): string {
+  return `# Methodology — How check_merchant Scores Trust
+
+This is a rules-based v1 scoring system, not a machine-learning model and not a certification. Every signal below maps to something specific and inspectable; nothing here is a black-box number. If you want the payment/auth mechanics instead of the scoring logic, see [auth.md](${SITE_ORIGIN}/auth.md).
+
+## What it's built from
+
+Only two kinds of data feed this: a merchant wallet's **observable on-chain settlement history**, and its **x402 activity** (what it charges, how often it's paid, by how many distinct payers). Nothing here is self-reported, manually reviewed, or sourced from off-chain reputation — a merchant can't improve its own score by filling out a form.
+
+## The six signals
+
+Every real finding below adds one entry to \`reasons\` and one matching code to \`risk_flags\`. Two of the six are currently dormant (no data source populates them yet), and one is stubbed — that's stated here plainly, not glossed over.
+
+1. **Wallet age.** Flags wallets younger than 14 days. A merchant that's only existed for a few days has no track record to speak of, independent of anything else about it.
+2. **Payer diversity.** Compares unique payers against total transaction count. Below a 0.3 ratio, volume looks concentrated among very few payers — a pattern consistent with wash volume. There's one override: a wallet with 50 or more distinct payers skips this check regardless of ratio, because a high-frequency-use API (an agent search endpoint an agent might call dozens of times per session) naturally drives the ratio down without any real concentration risk. Both numbers — the 0.3 ratio and the 50-payer floor — are calibrated against real production data, not guessed: the ratio was checked against 365 live merchants (the one confirmed "avoid" case sits at 0.05; "trusted" wallets average 0.56), and the 50-payer floor sits comfortably under where real PROCEED-tier merchants top out, while still being expensive to fake — reaching 50 distinct wallets that each made a real payment isn't cheap to fabricate.
+3. **Settlement completion.** *(Currently dormant on both chains — neither data source this service ingests from populates completed/abandoned flow counts yet.)* Once live, this flags a merchant whose quote→pay→deliver flow gets abandoned more than 35% of the time.
+4. **Refund / recourse.** Flags a merchant with zero refunds despite meaningful volume (20+ transactions) and nonzero refund-eligible volume — zero refunds at real volume isn't automatically suspicious, but it is a visible absence of recourse worth surfacing.
+5. **Price consistency.** *(Currently dormant on both chains — same reason as signal 3: no ingested source populates per-payer price observations yet.)* Once live, this flags a merchant charging different requesters different prices for the identical resource.
+6. **Velocity / anomaly detection.** *(Stubbed — not yet implemented on either chain.)* Meant to catch anomalous spikes in volume or transaction size. Deliberately not live yet: Solana settles roughly 4x faster than Base, and a threshold tuned on Base activity would over-flag entirely normal Solana usage. This gets implemented chain-aware, not retrofit after the fact.
+
+## From signals to a tier
+
+The rule is a direct count, not a weighted score: zero signals fired → **trusted**. Exactly one → **caution**. Two or more → **avoid**. A wallet that clears every check gets one explicit positive reason recorded too ("Consistent signals across wallet age, payer diversity, and settlement history"), not just a bare "nothing wrong found."
+
+## From tier to recommendation
+
+\`trust_tier\` (TRUSTED/CAUTION/AVOID) is the detailed read; \`recommendation\` (PROCEED/CAUTION/INSUFFICIENT_SIGNAL) is the smaller, deterministic vocabulary an agent's payment policy is meant to switch on directly. They're not the same axis:
+
+- Fewer than 5 transactions total → **INSUFFICIENT_SIGNAL**, regardless of tier. This is a data gap, not a behavioral finding — a wallet with too little history to say anything gets told exactly that, not defaulted into a false "caution."
+- 5 or more transactions, tier is trusted → **PROCEED**.
+- 5 or more transactions, tier is caution or avoid → **CAUTION**.
+
+There's no REJECT or BLOCK value. Nothing in this pipeline currently produces evidence strong enough to justify a hard block — adding one without that evidence would just be a stronger-sounding guess than the data supports.
+
+## Confidence and payer concentration
+
+\`confidence\` is graduated separately from the sufficiency gate above: HIGH at 50+ transactions, MEDIUM at 15+, LOW below that. A wallet can clear the 5-transaction sufficiency bar and still only warrant LOW confidence.
+
+\`payer_concentration\` (LOW/MEDIUM/HIGH) is derived from the same diversity ratio and 50-payer breadth override as signal 2 above — deliberately reusing the identical numbers, so this field can never say HIGH concentration while \`risk_flags\` stays silent on it.
+
+## Price fairness
+
+When a caller supplies a price (or the merchant has its own advertised price on file), it's compared against the median of comparable prices from other merchants in the same category: 3x the median or higher is **high**, 0.35x or lower is **low**, otherwise **fair**. Fewer than 3 comparable prices in that category returns **unknown** rather than a forced answer. These bands come from real observed spread across six categories and roughly 400 priced merchants, not an arbitrary percentage — categories like "data_api" bundle genuinely different resources at genuinely different price points, so the bands are wider than a single-product market would need.
+
+## Known limitations
+
+Stated plainly, not buried:
+
+- Two of the six signals (settlement completion, price consistency) are currently dormant on both chains — no ingested data source populates them yet.
+- The velocity/anomaly signal is stubbed entirely, and will need chain-specific tuning before it's safe to enable (see signal 6 above).
+- The payer-diversity ratio and its 50-payer override are calibrated against real Base data only; Solana's own payer-diversity distribution hasn't yet been separately validated.
+- Category price-fairness bands are grounded in real data but still coarse — six categories cover a wide range of actual resource types.
+
+None of this is a certification of any merchant's legitimacy. It's an algorithmic read of public, observable signals — decision support for an agent's own payment policy, not a substitute for it.
 `;
 }
 
