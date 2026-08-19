@@ -372,7 +372,7 @@ export default {
     // shared-secret header, not just discoverability-through-obscurity.
     // Exists because the cron trigger can't attach until the account has a
     // workers.dev subdomain enabled (see README); useful afterwards too, as
-    // an on-demand refresh outside the 4-hour cadence.
+    // an on-demand refresh outside the 2-hour cadence.
     if (url.pathname === "/refresh" && request.method === "POST") {
       if (request.headers.get("X-Admin-Token") !== env.ADMIN_TOKEN || !env.ADMIN_TOKEN) {
         return new Response("Unauthorized", { status: 401 });
@@ -383,7 +383,7 @@ export default {
 
     // Manual trigger for src/categorize — deliberately separate from
     // /refresh (requirement 6: categorization runs on its own, much slower
-    // cadence, not the 4-hour trust-signal schedule). Without ?force=true,
+    // cadence, not the 2-hour trust-signal schedule). Without ?force=true,
     // only categorizes wallets that don't have one yet (catch-up/backfill,
     // and the normal path since first-ingestion categorization already
     // happens inline in runRefresh — see src/refresh/index.ts). With
@@ -602,7 +602,7 @@ export default {
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     // Two cron expressions in wrangler.toml drive this one handler — branch
     // on which fired rather than always doing both, since categorization is
-    // deliberately not on the trust-signal refresh's 4-hour cadence.
+    // deliberately not on the trust-signal refresh's 2-hour cadence.
     if (controller.cron === MONTHLY_CATEGORIZATION_CRON) {
       ctx.waitUntil(runCategorization(env, { force: true }));
     } else {

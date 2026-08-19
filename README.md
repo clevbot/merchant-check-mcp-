@@ -181,7 +181,7 @@ merchant gets a `category` from a fixed six-value set
 anything the pipeline can't confidently place lands in `other` and is
 logged to `category_review_log` for a spot-check, not guessed.
 
-Two passes, run once per wallet on first ingestion (not the 4-hour
+Two passes, run once per wallet on first ingestion (not the 2-hour
 trust-signal cadence — a separate monthly cron force-re-runs everyone in
 case a listing's description changed, see `wrangler.toml`):
 1. **Rules** (`src/categorize/rules.ts`) — keyword match against the Bazaar
@@ -337,16 +337,18 @@ dashboard once provisioned it. Confirmed via a live `wrangler deploy`:
 schedule: 0 */4 * * *
 schedule: 0 0 1 * *
 ```
-Both cron triggers now attach cleanly. The refresh worker runs
-automatically every 4 hours; monthly forced re-categorization runs on the
-1st. Data had gone stale for 6+ days before this was caught and fixed —
-worth periodically checking `lastRefreshedAt` via `/api/wallets` even with
-the cron working, same as any scheduled job.
+Both cron triggers now attach cleanly. The refresh worker ran every 4
+hours at the time of that deploy output above; changed to every 2 hours
+on 2026-08-19 (current: `schedule: 0 */2 * * *`, see `wrangler.toml`).
+Monthly forced re-categorization runs on the 1st. Data had gone stale for
+6+ days before this was caught and fixed — worth periodically checking
+`lastRefreshedAt` on the homepage (`/api/wallets` is retired, see "Data
+access policy") even with the cron working, same as any scheduled job.
 
 ## Manual refresh trigger
 
 Not required anymore now that the cron is attached, but still useful for
-an on-demand refresh outside the 4-hour cadence (shared-secret header
+an on-demand refresh outside the 2-hour cadence (shared-secret header
 `X-Admin-Token`):
 ```bash
 curl -X POST https://mcp.gradientdecisions.com/refresh \
@@ -459,7 +461,7 @@ status as `category`, not a scoring input.
   `reasons` entry maps to one named signal; thresholds are constants at the
   top of the file.
 - [`src/refresh/index.ts`](src/refresh/index.ts) — scheduled worker (cron:
-  every 4 hours, see `wrangler.toml`) that aggregates raw activity into
+  every 2 hours, see `wrangler.toml`) that aggregates raw activity into
   `merchant_signals` rows.
 - [`src/refresh/indexer.ts`](src/refresh/indexer.ts) — `ChainDataSource`
   interface + `BazaarDataSource`, a real (not stubbed) implementation
@@ -704,7 +706,7 @@ Done:
 - ✅ `workers.dev` subdomain enabled 2026-08-18 — the cron trigger now
   attaches on deploy (confirmed live, see "Remaining one-time account
   setup" above). Data had silently gone stale for 6+ days before this was
-  caught; the automatic 4-hour refresh should prevent that recurring, but
+  caught; the automatic refresh (now every 2 hours) should prevent that recurring, but
   it's still worth spot-checking `lastRefreshedAt`.
 
 Still genuinely needed:

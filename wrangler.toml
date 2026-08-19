@@ -15,14 +15,19 @@ database_id = "0964f469-94f4-4da1-94a7-6033d89ccb9a"
 # ---------------------------------------------------------------------------
 # Two independent scheduled jobs share the scheduled() handler in
 # src/index.ts, which branches on controller.cron:
-#   - "0 */4 * * *"  trust-signal refresh (src/refresh), every 4 hours.
+#   - "0 */2 * * *"  trust-signal refresh (src/refresh), every 2 hours
+#                    (changed 2026-08-19 from every 4 hours — see
+#                    src/refresh/solana-indexer.ts's cycleSeconds constants,
+#                    which MUST stay in sync with this cadence since the
+#                    Helius/PayAI rotation math assumes one epoch per
+#                    refresh run).
 #   - "0 0 1 * *"    categorization force re-run (src/categorize), monthly
 #                    (1st of the month) — MUST match MONTHLY_CATEGORIZATION_CRON
 #                    in src/index.ts if ever changed. Deliberately not the
 #                    same cadence as the trust-signal refresh — requirement 6.
 # ---------------------------------------------------------------------------
 [triggers]
-crons = ["0 */4 * * *", "0 0 1 * *"]
+crons = ["0 */2 * * *", "0 0 1 * *"]
 
 # ---------------------------------------------------------------------------
 # Workers Logs (2026-08-19) — enabled at the user's request to get real

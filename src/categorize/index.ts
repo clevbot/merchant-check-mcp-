@@ -134,7 +134,7 @@ const DEFAULT_LIMIT = 200;
  * The decoupled categorization pass, per requirement 6: reads
  * bazaar_description straight from D1 (kept fresh by every trust-signal
  * refresh — see src/refresh/index.ts) rather than re-fetching Bazaar, so it
- * runs on its own cadence entirely independent of the 4-hour trust-signal
+ * runs on its own cadence entirely independent of the 2-hour trust-signal
  * schedule. Two ways in: POST /refresh's sibling POST /categorize
  * (src/index.ts) for a manual run, or the separate monthly cron trigger
  * (wrangler.toml) with force=true.

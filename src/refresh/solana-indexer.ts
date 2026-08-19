@@ -172,12 +172,14 @@ export class PayAIDataSource implements ChainDataSource {
     // discovered stayed flat at ~34-36 across many refresh cycles despite
     // "scanning 500 items" every time. Now every cycle covers a different
     // slice, so new merchants keep surfacing over time instead of the same
-    // ones forever — though at MAX_PAGES pages/cycle on a 4h cadence, a
-    // full sweep of a ~26,000-item catalog takes weeks, not days; this
-    // fixes staleness/repetition, it does not make discovery instant.
+    // ones forever — though at MAX_PAGES pages/cycle on a 2h cadence
+    // (changed 2026-08-19 from 4h — twice as many cycles/day, roughly
+    // halving sweep time), a full sweep of a ~26,000-item catalog still
+    // takes weeks, not days; this fixes staleness/repetition, it does not
+    // make discovery instant.
     const remainingPageBudget = MAX_PAGES - 1;
     const rotatablePages = Math.max(1, totalPages - 1); // excludes page 0, already covered above
-    const cycleSeconds = 4 * 60 * 60; // matches wrangler.toml's refresh cron cadence
+    const cycleSeconds = 2 * 60 * 60; // matches wrangler.toml's refresh cron cadence
     const epoch = Math.floor(Date.now() / 1000 / cycleSeconds);
     const startIndex = epoch % rotatablePages;
 
@@ -303,14 +305,15 @@ export class PayAIDataSource implements ChainDataSource {
    * insertion order (PayAI's own pagination order) doesn't change run to
    * run — the same N wallets got refreshed and the rest never did. Rotating
    * means every wallet eventually gets a turn across successive cron
-   * cycles (4h apart — see wrangler.toml) instead of a permanently-stuck
-   * remainder. With today's real catalog size (34 Solana wallets, cap of
-   * 8/cycle) full coverage takes ~5 cycles (~20h) — acceptable for a
+   * cycles (2h apart — see wrangler.toml, changed 2026-08-19 from 4h)
+   * instead of a permanently-stuck remainder. With today's real catalog
+   * size (34 Solana wallets, cap of 8/cycle) full coverage takes ~5
+   * cycles (~10h, was ~20h at the old cadence) — acceptable for a
    * feature this new; revisit MAX_HELIUS_WALLETS as the real catalog grows.
    */
   private async augmentWithHelius(sinceUnixSeconds: number, apiKey: string): Promise<void> {
     const allWallets = [...this.cache.keys()];
-    const cycleSeconds = 4 * 60 * 60; // matches wrangler.toml's refresh cron cadence
+    const cycleSeconds = 2 * 60 * 60; // matches wrangler.toml's refresh cron cadence
     const epoch = Math.floor(Date.now() / 1000 / cycleSeconds);
     const offset = allWallets.length > 0 ? epoch % allWallets.length : 0;
     const wallets: string[] = [];
