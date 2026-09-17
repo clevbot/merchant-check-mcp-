@@ -40,9 +40,13 @@ const BAZAAR_DISCOVERY_URL = "https://api.cdp.coinbase.com/platform/v2/x402/disc
 /** Exported so other modules (e.g. src/dashboard.ts) filter on the same value rather than a second hardcoded copy. */
 export const BASE_MAINNET_NETWORK = "eip155:8453";
 const PAGE_SIZE = 100;
-// 20 pages * 100 = up to 2,000 resources per refresh run. Bazaar had ~14.5k
-// total resources as of 2026-08-10; raise this once refresh-worker runtime/
-// cost at full coverage is known. Cheaper than it sounds since this is a
+// 20 pages * 100 = up to 2,000 resources scanned per refresh run — not the
+// same as 2,000 resources total anymore (see listActiveMerchants' rotation
+// comment, added 2026-09-17): each run's 2,000-item window now rotates
+// through the whole catalog over successive cycles instead of always being
+// the same first 2,000. Bazaar had ~14.5k total resources as of 2026-08-10,
+// ~15.9k as of 2026-09-17; raise this once refresh-worker runtime/cost at a
+// wider per-run slice is known. Cheaper than it sounds since this is a
 // single unauthenticated fetch loop, not per-wallet chain calls.
 const MAX_PAGES = 20;
 
@@ -121,8 +125,48 @@ export class BazaarDataSource implements ChainDataSource {
 
   async listActiveMerchants(_sinceUnixSeconds: number): Promise<string[]> {
     this.cache.clear();
-    let offset = 0;
-    for (let page = 0; page < MAX_PAGES; page++) {
+
+    // Page 0 is always scanned fresh (cheap, and gives pagination.total —
+    // we don't know the real catalog size ahead of time).
+    const firstRes = await fetch(`${BAZAAR_DISCOVERY_URL}?limit=${PAGE_SIZE}&offset=0`, {
+      headers: { Accept: "application/json" },
+    });
+    if (!firstRes.ok) {
+      throw new Error(`Bazaar discovery request failed: ${firstRes.status} ${firstRes.statusText}`);
+    }
+    const firstBody = (await firstRes.json()) as BazaarListResponse;
+    for (const item of firstBody.items) {
+      this.ingestItem(item);
+    }
+    const total = firstBody.pagination.total;
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+    // Rotate which of the REMAINING (MAX_PAGES - 1) pages get scanned each
+    // cycle — added 2026-09-17 after a real, confirmed finding (same
+    // pattern src/refresh/solana-indexer.ts's PayAIDataSource already fixed
+    // for the identical reason 2026-08-18): this always started at offset 0
+    // and scanned the same fixed MAX_PAGES window every single cycle,
+    // forever. Confirmed live: Bazaar's Base catalog had grown to ~15,875
+    // resources while this indexer had never scanned past position 2,000,
+    // and 2,000 raw resource listings collapse to only ~542 distinct payTo
+    // wallets (merchants commonly back several resource routes each) — this
+    // indexer's own merchant_signals count (695) lines up almost exactly
+    // with that fixed window's unique-wallet count, not coincidentally.
+    // Now every cycle covers a different slice, so new merchants keep
+    // surfacing over time instead of the same ~540 forever. Same caveat as
+    // the Solana version: this fixes staleness/repetition, it does not make
+    // a full sweep of a growing ~16k-item catalog instant — at MAX_PAGES
+    // pages/cycle on a 2h cadence, a full sweep still takes days to weeks.
+    const remainingPageBudget = MAX_PAGES - 1;
+    const rotatablePages = Math.max(1, totalPages - 1); // excludes page 0, already covered above
+    const cycleSeconds = 2 * 60 * 60; // matches wrangler.toml's refresh cron cadence
+    const epoch = Math.floor(Date.now() / 1000 / cycleSeconds);
+    const startIndex = epoch % rotatablePages;
+
+    for (let i = 0; i < remainingPageBudget; i++) {
+      const pageNum = 1 + ((startIndex + i) % rotatablePages);
+      const offset = pageNum * PAGE_SIZE;
+      if (offset >= total) continue;
       const res = await fetch(`${BAZAAR_DISCOVERY_URL}?limit=${PAGE_SIZE}&offset=${offset}`, {
         headers: { Accept: "application/json" },
       });
@@ -133,8 +177,6 @@ export class BazaarDataSource implements ChainDataSource {
       for (const item of body.items) {
         this.ingestItem(item);
       }
-      offset += PAGE_SIZE;
-      if (offset >= body.pagination.total || body.items.length === 0) break;
     }
     return [...this.cache.keys()];
   }
