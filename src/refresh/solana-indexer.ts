@@ -96,7 +96,16 @@ const PAGE_SIZE = 100;
 // (Bundled/Paid raises this to 1000) would remove the need for this
 // tight a budget entirely — flagged as a real option, not done here since
 // it's a billing decision, not a code one.
-const MAX_PAGES = 5; // 5 * 100 = up to 500 discovery items scanned per run, leaving budget for Helius below.
+//
+// Raised 5 -> 8 on 2026-09-17, using part (not all) of a real, previously
+// unspent ~9-request buffer in that shared budget (see MAX_HELIUS_WALLETS'
+// own comment below for the full accounting) — deliberately not all of it,
+// so a real safety margin still exists for anything not accounted for
+// above. 8 was chosen for proportional parity with BazaarDataSource, not
+// picked arbitrarily: Base scans 20 of Bazaar's ~15,875-item catalog per
+// cycle (~12.6%); PayAI's catalog is ~6,544 (see FRESH_PAGES' own comment)
+// — matching that same ~12.6% coverage rate needs about 8 pages here.
+const MAX_PAGES = 8; // 8 * 100 = up to 800 discovery items scanned per run, leaving budget for Helius below.
 // Confirmed live 2026-09-17 by direct sampling (comparing each item's own
 // `lastUpdated` at offset 0 vs. offset 6400, near the end of PayAI's then-
 // 6,544-item catalog): the feed is sorted newest-activity-first — offset 0
@@ -121,12 +130,14 @@ const USDC_SOLANA_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 // loop above — cap both how many wallets get augmented per refresh run and
 // how deep each wallet's history gets paged. Sized against the ~50-subrequest
 // invocation budget (see MAX_PAGES comment above) with real margin, not
-// razor-thin: BazaarDataSource (≤20) + this file's own discovery pages (≤5)
-// + Helius (≤8 here) + refresh/index.ts's own inline-categorization cap
-// (≤8 Anthropic calls) totals ≤41 of ~50, leaving a ~9-request buffer for
-// anything not accounted for above. This is a conservative slice of what's
-// left, not "how much Helius's free tier alone could support" (that's a
-// much higher number — 1M credits/month easily covers more than this).
+// razor-thin: BazaarDataSource (≤20) + this file's own discovery pages (≤8,
+// raised from ≤5 on 2026-09-17 — see MAX_PAGES' own comment) + Helius (≤8
+// here) + refresh/index.ts's own inline-categorization cap (≤8 Anthropic
+// calls) totals ≤44 of ~50, leaving a ~6-request buffer for anything not
+// accounted for above (down from ~9, but deliberately not spent to zero).
+// This is a conservative slice of what's left, not "how much Helius's free
+// tier alone could support" (that's a much higher number — 1M credits/month
+// easily covers more than this).
 // Raise this once Cloudflare's subrequest ceiling is actually raised
 // (Workers Paid plan) rather than independently of it, or a wallet-by-wallet
 // run stays capped by *this* budget regardless of how generous Helius's own
