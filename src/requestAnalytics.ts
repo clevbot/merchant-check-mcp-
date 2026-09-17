@@ -10,9 +10,19 @@
  * query_log's own comment already named the gap this fills: "it cannot
  * see how many 402 challenges were issued that never converted... needs
  * instrumentation earlier in the x402 handshake." src/index.ts's
- * logMcpAttemptIfUnpaid and the extended onVerifyFailure hook are that
+ * logMcpRequest and the extended onVerifyFailure hook are that
  * instrumentation (writing to db/schema.sql's request_events); this file
  * is the dashboard on top of it.
+ *
+ * Revised same day, hours after shipping: the first version only logged
+ * unpaid check_merchant attempts and still showed near-zero data against
+ * a live traffic firehose. Direct inspection of a real request (a 46-byte
+ * POST /mcp body — too small for a check_merchant call) showed why: most
+ * /mcp traffic is MCP-level discovery (initialize, tools/list, ping) from
+ * directories/crawlers that never call the paid tool at all. The "paid
+ * tool" funnel (challenge/verify/settled) and general protocol traffic
+ * are now reported separately below, not conflated — see
+ * RequestAnalytics.protocolCallCount's own comment for why.
  *
  * Same internal-only posture as src/callerDashboard.ts: admin-token
  * gated (see src/index.ts GET /admin/requests), not linked from the
@@ -39,8 +49,9 @@ function relativeTime(unixSeconds: number): string {
 }
 
 export function renderRequestAnalyticsHtml(data: RequestAnalytics): string {
-  const { funnel, topUserAgents, topAsOrganizations, topCountries, topRequestedWallets, dailyFunnel, recentEvents } = data;
+  const { funnel, protocolCallCount, topMcpMethods, topUserAgents, topAsOrganizations, topCountries, topRequestedWallets, dailyFunnel, recentEvents } = data;
   const totalAttempts = funnel.challengeIssued + funnel.verifyFailed + funnel.settled;
+  const totalMcpTraffic = totalAttempts + protocolCallCount;
 
   const dailyRows = dailyFunnel
     .map(
@@ -66,11 +77,12 @@ export function renderRequestAnalyticsHtml(data: RequestAnalytics): string {
 
   const recentRows = recentEvents
     .map((e) => {
-      const cls = e.eventType === "verify_failed" ? "verify-failed" : "challenge";
+      const cls = e.eventType === "verify_failed" ? "verify-failed" : e.eventType === "protocol_call" ? "protocol" : "challenge";
+      const eventLabel = e.eventType === "protocol_call" ? `protocol_call (${escapeHtml(e.mcpMethod ?? "unknown")})` : escapeHtml(e.eventType);
       return `<tr class="${cls}">
         <td>${relativeTime(e.occurredAt)}</td>
         <td>${escapeHtml(e.path)}</td>
-        <td>${escapeHtml(e.eventType)}</td>
+        <td>${eventLabel}</td>
         <td>${e.queriedWalletAddress ? `<code title="${escapeHtml(e.queriedWalletAddress)}">${escapeHtml(truncateAddress(e.queriedWalletAddress))}</code>` : "—"}</td>
         <td title="${e.asOrganization ? escapeHtml(e.asOrganization) : ""}">${e.country ? escapeHtml(e.country) : "—"}</td>
         <td class="ua" title="${e.userAgent ? escapeHtml(e.userAgent) : ""}">${e.userAgent ? escapeHtml(e.userAgent.length > 50 ? e.userAgent.slice(0, 50) + "…" : e.userAgent) : "—"}</td>
@@ -98,6 +110,7 @@ ${FAVICON_LINK}
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   td.settled { color: #4ade80; }
   tr.verify-failed td.err { color: #f87171; }
+  tr.protocol td { color: #71717a; }
   td.ua, td.err { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .stats { display: flex; gap: 1.5rem; margin: 1rem 0; flex-wrap: wrap; }
   .stat b { font-size: 1.3rem; display: block; color: var(--accent); }
@@ -113,14 +126,22 @@ ${FAVICON_LINK}
 <div class="brand-row">${renderMonogram("req-header", 22)}<span>Gradient Decisions, Internal</span></div>
 <h1>Request funnel analytics</h1>
 <p class="note">
-  Internal only, not linked from the public site. Every incoming check_merchant attempt on either
-  payment path (MCP tools/call, GET /check), split into three stages: a challenge issued with no
-  payment attached yet, a payment attached but rejected at verification, or a real settled call.
-  "Settled" comes from query_log (the paid-call log); the other two come from request_events,
-  added specifically to answer "why aren't they paying" — before this, that question was
-  unanswerable from stored data at all.
+  Internal only, not linked from the public site. Two separate measurements below, not one funnel:
+  general MCP protocol traffic hitting /mcp (initialize, tools/list, ping, ...) — mostly directory/
+  crawler discovery that never asks for the paid tool at all — and the actual check_merchant
+  payment funnel (challenge issued with no payment yet → payment attached but rejected at
+  verification → real settled call). "Settled" comes from query_log; everything else comes from
+  request_events, added specifically to answer "why aren't they paying."
 </p>
 
+<h2 style="margin-top:1rem;">MCP protocol traffic (not attempts to use the paid tool)</h2>
+<div class="stats">
+  <div class="stat"><b>${totalMcpTraffic.toLocaleString()}</b>total /mcp requests (window)</div>
+  <div class="stat"><b>${protocolCallCount.toLocaleString()}</b>protocol calls, no tool invoked (${pct(protocolCallCount, totalMcpTraffic)})</div>
+</div>
+<table><thead><tr><th>MCP method</th><th class="num">Count</th></tr></thead><tbody>${topTable(topMcpMethods)}</tbody></table>
+
+<h2>check_merchant payment funnel</h2>
 <div class="stats">
   <div class="stat"><b>${totalAttempts.toLocaleString()}</b>total attempts (window)</div>
   <div class="stat"><b>${funnel.challengeIssued.toLocaleString()}</b>challenge issued, no payment (${pct(funnel.challengeIssued, totalAttempts)})</div>
@@ -154,7 +175,7 @@ ${FAVICON_LINK}
 <table><thead><tr><th>Merchant wallet</th><th class="num">Requests</th></tr></thead><tbody>${walletRows || "<tr><td colspan=2>No data in window.</td></tr>"}</tbody></table>
 
 <h2>Recent raw events (up to 200, newest first)</h2>
-<p class="note">Rows highlighted red are real payment attempts that failed verification — hover the Reason column for the full facilitator error. Everything else is a bare, unpaid call.</p>
+<p class="note">Red rows are real payment attempts that failed verification — hover the Reason column for the full facilitator error. Gray rows are general MCP protocol calls (never asked for the paid tool at all). Everything else is a bare, unpaid check_merchant call.</p>
 <div class="overflow">
 <table><thead><tr><th>When</th><th>Path</th><th>Event</th><th>Wallet asked about</th><th>Country</th><th>User agent</th><th>Reason (if failed)</th></tr></thead>
 <tbody>${recentRows || "<tr><td colspan=7>No data in window.</td></tr>"}</tbody></table>

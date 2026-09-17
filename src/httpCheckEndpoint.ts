@@ -170,6 +170,7 @@ export async function handleCheckGet(request: Request, env: Env, resourceServer:
       path: "/check",
       eventType: "challenge_issued",
       toolName: "check_merchant",
+      mcpMethod: null,
       queriedWalletAddress: merchantWalletAddress,
       verifyError: null,
       callerIp: request.headers.get("cf-connecting-ip"),

@@ -143,6 +143,7 @@ function getResourceServer(env: Env): Promise<x402ResourceServer> {
           path: mcpContext?.toolName ? "/mcp" : "/check",
           eventType: "verify_failed",
           toolName: mcpContext?.toolName ?? "check_merchant",
+          mcpMethod: null,
           queriedWalletAddress: (mcpContext?.arguments?.merchant_wallet_address as string) ?? null,
           verifyError: errorMessage,
           callerIp: null,
@@ -185,15 +186,28 @@ function extractCallerMeta(request: Request): CallerMeta {
 }
 
 /**
- * Top of the funnel for the MCP path: fires for a `tools/call` on
- * check_merchant that doesn't (yet) carry a payment payload — the case
- * that never reaches verifyPayment() at all (createPaymentWrapper returns
- * a 402 directly), so onVerifyFailure below can never see it. Deliberately
- * does NOT fire for a retry that does carry a payment payload — that
- * request is a real attempt, whose outcome onVerifyFailure or
- * onAfterSettlement will already capture; counting it here too would
- * double up and inflate the "never even tried to pay" read this exists to
- * measure honestly.
+ * Logs every incoming /mcp POST — broadened 2026-09-17, hours after the
+ * first version shipped only logging unpaid check_merchant attempts.
+ * Direct live-traffic inspection (a 46-byte POST /mcp body, far too small
+ * for a check_merchant tools/call) showed most /mcp traffic never calls
+ * tools/call on check_merchant at all — it's MCP-level discovery
+ * (initialize, tools/list, ping) from directories/crawlers checking the
+ * server exists and is protocol-compliant, which the original
+ * unpaid-check_merchant-only version had no way to see. This is that: an
+ * honest breakdown of everything hitting /mcp, not just paid-tool
+ * attempts.
+ *
+ * - method !== tools/call, or tools/call for anything but check_merchant
+ *   → event_type 'protocol_call', mcp_method = the real JSON-RPC method.
+ * - tools/call for check_merchant WITHOUT a payment payload → the
+ *   original 'challenge_issued' case: a call that will get a 402 and
+ *   never reaches verifyPayment() at all, so onVerifyFailure can't see
+ *   it either.
+ * - tools/call for check_merchant WITH a payment payload → logs nothing
+ *   here; that's a real attempt whose outcome onVerifyFailure or
+ *   onAfterSettlement will already capture, and double-logging it here
+ *   too would inflate the "never even tried to pay" read this exists to
+ *   measure honestly.
  *
  * Reads the request body via request.clone() — the original Request is
  * untouched and still readable by transport.handleRequest() afterward.
@@ -202,26 +216,28 @@ function extractCallerMeta(request: Request): CallerMeta {
  * duplicated here as a literal rather than imported since the package
  * doesn't export it.
  */
-async function logMcpAttemptIfUnpaid(request: Request, env: Env, ctx: ExecutionContext): Promise<void> {
+async function logMcpRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<void> {
   let body: { method?: string; params?: { name?: string; arguments?: Record<string, unknown>; _meta?: Record<string, unknown> } };
   try {
     body = await request.clone().json();
   } catch {
     return; // Not a parseable single JSON-RPC request (e.g. a batch, or malformed) — not worth guessing at.
   }
-  if (body.method !== "tools/call" || body.params?.name !== "check_merchant") return;
-  if (body.params._meta?.["x402/payment"]) return; // Real payment attempt — let onVerifyFailure/onAfterSettlement cover it.
+
+  const isCheckMerchantCall = body.method === "tools/call" && body.params?.name === "check_merchant";
+  if (isCheckMerchantCall && body.params?._meta?.["x402/payment"]) return; // Real payment attempt — let onVerifyFailure/onAfterSettlement cover it.
 
   const meta = extractCallerMeta(request);
   ctx.waitUntil(
     logRequestEvent(env, {
       path: "/mcp",
-      eventType: "challenge_issued",
-      toolName: "check_merchant",
-      queriedWalletAddress: (body.params.arguments?.merchant_wallet_address as string) ?? null,
+      eventType: isCheckMerchantCall ? "challenge_issued" : "protocol_call",
+      toolName: isCheckMerchantCall ? "check_merchant" : null,
+      mcpMethod: isCheckMerchantCall ? null : (body.method ?? "unknown"),
+      queriedWalletAddress: isCheckMerchantCall ? ((body.params?.arguments?.merchant_wallet_address as string) ?? null) : null,
       verifyError: null,
       ...meta,
-    }).catch((err) => console.error("logRequestEvent (challenge_issued) failed:", err)),
+    }).catch((err) => console.error("logRequestEvent failed:", err)),
   );
 }
 
@@ -755,7 +771,7 @@ export default {
     }
 
     if (request.method === "POST") {
-      await logMcpAttemptIfUnpaid(request, env, ctx);
+      await logMcpRequest(request, env, ctx);
     }
 
     const resourceServer = await getResourceServer(env);

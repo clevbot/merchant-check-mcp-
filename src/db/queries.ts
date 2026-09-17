@@ -138,8 +138,11 @@ export async function logQuery(env: Env, params: LogQueryParams): Promise<void> 
 
 export interface LogRequestEventParams {
   path: "/mcp" | "/check";
-  eventType: "challenge_issued" | "verify_failed";
+  eventType: "challenge_issued" | "verify_failed" | "protocol_call";
+  /** Set for 'challenge_issued'/'verify_failed' — NULL for 'protocol_call' (see mcpMethod instead). */
   toolName: string | null;
+  /** The raw JSON-RPC method ('initialize', 'tools/list', 'ping', ...) — set only for 'protocol_call'. */
+  mcpMethod: string | null;
   queriedWalletAddress: string | null;
   /** Only meaningful for eventType 'verify_failed'. */
   verifyError: string | null;
@@ -168,15 +171,16 @@ export interface LogRequestEventParams {
 export async function logRequestEvent(env: Env, params: LogRequestEventParams): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO request_events (
-      occurred_at, path, event_type, tool_name, queried_wallet_address, verify_error,
+      occurred_at, path, event_type, tool_name, mcp_method, queried_wallet_address, verify_error,
       caller_ip, user_agent, asn, as_organization, country, colo
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       Math.floor(Date.now() / 1000),
       params.path,
       params.eventType,
       params.toolName,
+      params.mcpMethod,
       params.queriedWalletAddress,
       params.verifyError,
       params.callerIp,
@@ -210,6 +214,18 @@ export interface DailyFunnel {
 export interface RequestAnalytics {
   windowSeconds: number;
   funnel: FunnelCounts;
+  /**
+   * Separate from `funnel` on purpose: this counts MCP-level protocol
+   * traffic (initialize, tools/list, ping, ...) that never even attempts
+   * to call check_merchant — added after live traffic inspection showed
+   * this is most of what /mcp actually sees (directories/crawlers
+   * checking the server exists and is protocol-compliant), which the
+   * original challenge/verify/settled funnel had no way to represent.
+   * Mixing it into `funnel` would make "total attempts" mean two
+   * different things depending on which number moved.
+   */
+  protocolCallCount: number;
+  topMcpMethods: TopCount[];
   topUserAgents: TopCount[];
   topAsOrganizations: TopCount[];
   topCountries: TopCount[];
@@ -231,54 +247,53 @@ export interface RequestAnalytics {
 export async function getRequestAnalytics(env: Env, windowSeconds: number): Promise<RequestAnalytics> {
   const since = Math.floor(Date.now() / 1000) - windowSeconds;
 
-  const [
-    challengeRow,
-    verifyFailedRow,
-    settledRow,
-    uaRows,
-    asOrgRows,
-    countryRows,
-    walletRows,
-    requestEventDailyRows,
-    settledDailyRows,
-    recentRows,
-  ] = await Promise.all([
-    env.DB.prepare(`SELECT COUNT(*) as n FROM request_events WHERE event_type = 'challenge_issued' AND occurred_at >= ?`)
+  const queries = {
+    challenge: env.DB.prepare(`SELECT COUNT(*) as n FROM request_events WHERE event_type = 'challenge_issued' AND occurred_at >= ?`)
       .bind(since)
       .first<{ n: number }>(),
-    env.DB.prepare(`SELECT COUNT(*) as n FROM request_events WHERE event_type = 'verify_failed' AND occurred_at >= ?`)
+    verifyFailed: env.DB.prepare(`SELECT COUNT(*) as n FROM request_events WHERE event_type = 'verify_failed' AND occurred_at >= ?`)
       .bind(since)
       .first<{ n: number }>(),
-    env.DB.prepare(`SELECT COUNT(*) as n FROM query_log WHERE queried_at >= ?`).bind(since).first<{ n: number }>(),
-    env.DB.prepare(
+    protocolCall: env.DB.prepare(`SELECT COUNT(*) as n FROM request_events WHERE event_type = 'protocol_call' AND occurred_at >= ?`)
+      .bind(since)
+      .first<{ n: number }>(),
+    settled: env.DB.prepare(`SELECT COUNT(*) as n FROM query_log WHERE queried_at >= ?`).bind(since).first<{ n: number }>(),
+    mcpMethods: env.DB.prepare(
+      `SELECT mcp_method as value, COUNT(*) as count FROM request_events
+       WHERE occurred_at >= ? AND mcp_method IS NOT NULL
+       GROUP BY mcp_method ORDER BY count DESC LIMIT 15`,
+    )
+      .bind(since)
+      .all<TopCount>(),
+    userAgents: env.DB.prepare(
       `SELECT user_agent as value, COUNT(*) as count FROM request_events
        WHERE occurred_at >= ? AND user_agent IS NOT NULL
        GROUP BY user_agent ORDER BY count DESC LIMIT 15`,
     )
       .bind(since)
       .all<TopCount>(),
-    env.DB.prepare(
+    asOrganizations: env.DB.prepare(
       `SELECT as_organization as value, COUNT(*) as count FROM request_events
        WHERE occurred_at >= ? AND as_organization IS NOT NULL
        GROUP BY as_organization ORDER BY count DESC LIMIT 15`,
     )
       .bind(since)
       .all<TopCount>(),
-    env.DB.prepare(
+    countries: env.DB.prepare(
       `SELECT country as value, COUNT(*) as count FROM request_events
        WHERE occurred_at >= ? AND country IS NOT NULL
        GROUP BY country ORDER BY count DESC LIMIT 15`,
     )
       .bind(since)
       .all<TopCount>(),
-    env.DB.prepare(
+    wallets: env.DB.prepare(
       `SELECT queried_wallet_address as value, COUNT(*) as count FROM request_events
        WHERE occurred_at >= ? AND queried_wallet_address IS NOT NULL
        GROUP BY queried_wallet_address ORDER BY count DESC LIMIT 15`,
     )
       .bind(since)
       .all<TopCount>(),
-    env.DB.prepare(
+    requestEventDaily: env.DB.prepare(
       `SELECT
          date(occurred_at, 'unixepoch') as day,
          SUM(CASE WHEN event_type = 'challenge_issued' THEN 1 ELSE 0 END) as challengeIssued,
@@ -287,19 +302,47 @@ export async function getRequestAnalytics(env: Env, windowSeconds: number): Prom
     )
       .bind(since)
       .all<{ day: string; challengeIssued: number; verifyFailed: number }>(),
-    env.DB.prepare(
+    settledDaily: env.DB.prepare(
       `SELECT date(queried_at, 'unixepoch') as day, COUNT(*) as settled
        FROM query_log WHERE queried_at >= ? GROUP BY day ORDER BY day ASC`,
     )
       .bind(since)
       .all<{ day: string; settled: number }>(),
-    env.DB.prepare(
-      `SELECT occurred_at, path, event_type, tool_name, queried_wallet_address, verify_error,
+    recent: env.DB.prepare(
+      `SELECT occurred_at, path, event_type, tool_name, mcp_method, queried_wallet_address, verify_error,
               caller_ip, user_agent, asn, as_organization, country, colo
        FROM request_events WHERE occurred_at >= ? ORDER BY occurred_at DESC LIMIT 200`,
     )
       .bind(since)
       .all<Record<string, unknown>>(),
+  };
+
+  const [
+    challengeRow,
+    verifyFailedRow,
+    protocolCallRow,
+    settledRow,
+    mcpMethodRows,
+    uaRows,
+    asOrgRows,
+    countryRows,
+    walletRows,
+    requestEventDailyRows,
+    settledDailyRows,
+    recentRows,
+  ] = await Promise.all([
+    queries.challenge,
+    queries.verifyFailed,
+    queries.protocolCall,
+    queries.settled,
+    queries.mcpMethods,
+    queries.userAgents,
+    queries.asOrganizations,
+    queries.countries,
+    queries.wallets,
+    queries.requestEventDaily,
+    queries.settledDaily,
+    queries.recent,
   ]);
 
   const settledByDay = new Map((settledDailyRows.results ?? []).map((r) => [r.day, r.settled]));
@@ -311,6 +354,8 @@ export async function getRequestAnalytics(env: Env, windowSeconds: number): Prom
       verifyFailed: verifyFailedRow?.n ?? 0,
       settled: settledRow?.n ?? 0,
     },
+    protocolCallCount: protocolCallRow?.n ?? 0,
+    topMcpMethods: mcpMethodRows.results ?? [],
     topUserAgents: uaRows.results ?? [],
     topAsOrganizations: asOrgRows.results ?? [],
     topCountries: countryRows.results ?? [],
@@ -319,8 +364,9 @@ export async function getRequestAnalytics(env: Env, windowSeconds: number): Prom
     recentEvents: (recentRows.results ?? []).map((r) => ({
       occurredAt: r.occurred_at as number,
       path: r.path as "/mcp" | "/check",
-      eventType: r.event_type as "challenge_issued" | "verify_failed",
+      eventType: r.event_type as "challenge_issued" | "verify_failed" | "protocol_call",
       toolName: (r.tool_name as string) ?? null,
+      mcpMethod: (r.mcp_method as string) ?? null,
       queriedWalletAddress: (r.queried_wallet_address as string) ?? null,
       verifyError: (r.verify_error as string) ?? null,
       callerIp: (r.caller_ip as string) ?? null,

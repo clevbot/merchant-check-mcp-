@@ -213,18 +213,33 @@ CREATE TABLE IF NOT EXISTS query_log (
 -- thousands/day from monitoring bots alone). No retention/pruning is
 -- implemented yet — acceptable for now as a diagnostic tool, but revisit
 -- if D1 storage becomes a real constraint.
+--
+-- event_type = 'protocol_call' added the same day, hours after the first
+-- version shipped — real live traffic inspection (a 46-byte POST /mcp
+-- body, far too small to be a check_merchant tools/call) showed most
+-- /mcp traffic never calls tools/call on check_merchant at all: it's
+-- MCP-level discovery (initialize, tools/list, ping) from directories/
+-- crawlers checking the server exists and is protocol-compliant, which
+-- the original challenge_issued/verify_failed-only design silently
+-- couldn't see. mcp_method carries the actual JSON-RPC method for these
+-- (and is left NULL for challenge_issued/verify_failed rows, which
+-- already have tool_name for the same purpose).
 CREATE TABLE IF NOT EXISTS request_events (
   id                      INTEGER PRIMARY KEY AUTOINCREMENT,
   occurred_at             INTEGER NOT NULL,
   -- '/mcp' or '/check' — the two real payment-gated entry points.
   path                    TEXT NOT NULL,
-  -- 'challenge_issued' | 'verify_failed'. See comment above for why
-  -- 'settled' isn't a value here.
+  -- 'challenge_issued' | 'verify_failed' | 'protocol_call'. See comments
+  -- above for why 'settled' isn't a value here, and what 'protocol_call'
+  -- covers.
   event_type              TEXT NOT NULL,
   -- 'check_merchant' — the one real tool today, kept as a column (not
   -- hardcoded in queries) since a second tool would otherwise silently
-  -- fall through unlabeled.
+  -- fall through unlabeled. NULL for 'protocol_call' rows (see mcp_method).
   tool_name               TEXT,
+  -- The raw JSON-RPC method (e.g. 'initialize', 'tools/list', 'ping') for
+  -- event_type = 'protocol_call' rows only — NULL otherwise.
+  mcp_method              TEXT,
   -- merchant_wallet_address from the request args, when present/parseable
   -- — "what are they looking for", not a caller identity.
   queried_wallet_address  TEXT,
@@ -247,3 +262,14 @@ CREATE TABLE IF NOT EXISTS request_events (
   country                 TEXT,
   colo                    TEXT
 );
+
+-- request_events already existed in production before mcp_method was added
+-- (same day, hours apart — see that column's comment above): the live
+-- table was migrated with a one-off `ALTER TABLE request_events ADD
+-- COLUMN mcp_method TEXT`, run directly, not kept here. D1's SQLite
+-- doesn't support "ADD COLUMN IF NOT EXISTS" (confirmed by hitting a real
+-- syntax error trying it, not assumed from vanilla SQLite 3.35+ docs), so
+-- an ALTER can't be made idempotent the way CREATE TABLE IF NOT EXISTS
+-- is — safe to leave out of this file since the CREATE TABLE above
+-- already includes the column for any fresh database, and the live one
+-- only ever needed the ALTER once.
