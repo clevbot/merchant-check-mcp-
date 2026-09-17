@@ -65,6 +65,21 @@ import type { ChainDataSource, RawMerchantActivity } from "./indexer";
 const PAYAI_DISCOVERY_URL = "https://facilitator.payai.network/discovery/resources";
 /** Exported so other modules (e.g. src/dashboard.ts) filter on the same value rather than a second hardcoded copy. */
 export const SOLANA_MAINNET_NETWORK = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
+/**
+ * Added 2026-09-17. This file's own header already documented PayAI as a
+ * mixed Base+Solana catalog from day one (2026-08-18) — that part isn't
+ * new. What direct live sampling found today is narrower but real: a
+ * handful of items (3 of 1,000 sampled) use the bare string "solana"
+ * instead of the full CAIP-2 id above, which the exact-match filter this
+ * replaces silently dropped even though they're genuinely Solana
+ * resources. Small in volume but unambiguous data loss, not a judgment
+ * call. (Also notable from the same sampling pass, though not something
+ * code can fix: PayAI's total catalog has shrunk a lot since that original
+ * research — 25,928 items on 2026-08-18 vs 6,544 now.)
+ */
+function isSolanaMainnet(network: string | undefined): boolean {
+  return network === SOLANA_MAINNET_NETWORK || network === "solana";
+}
 const PAGE_SIZE = 100;
 // Confirmed live via wrangler tail on 2026-08-12: this account's Worker
 // invocation has a real ~50 *total* external-fetch (subrequest) budget, not
@@ -231,7 +246,7 @@ export class PayAIDataSource implements ChainDataSource {
     // ambiguity (unlike EVM hex) to collapse across entries.
     const solanaPayTos = new Set(
       (item.accepts ?? [])
-        .filter((a) => a.network === SOLANA_MAINNET_NETWORK && a.payTo)
+        .filter((a) => isSolanaMainnet(a.network) && a.payTo)
         .map((a) => a.payTo),
     );
     // No `quality` field observed on any sampled PayAI item (confirmed via
@@ -246,7 +261,7 @@ export class PayAIDataSource implements ChainDataSource {
       .join(". ");
 
     const solanaAccepts = (item.accepts ?? []).filter(
-      (a) => a.network === SOLANA_MAINNET_NETWORK && a.amount,
+      (a) => isSolanaMainnet(a.network) && a.amount,
     );
     const chosenAccept = solanaAccepts.find((a) => a.scheme === "exact") ?? solanaAccepts[0];
     const priceAtomic = chosenAccept ? Number(chosenAccept.amount) : NaN;
