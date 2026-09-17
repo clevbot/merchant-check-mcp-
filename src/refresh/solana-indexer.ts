@@ -97,6 +97,21 @@ const PAGE_SIZE = 100;
 // tight a budget entirely — flagged as a real option, not done here since
 // it's a billing decision, not a code one.
 const MAX_PAGES = 5; // 5 * 100 = up to 500 discovery items scanned per run, leaving budget for Helius below.
+// Confirmed live 2026-09-17 by direct sampling (comparing each item's own
+// `lastUpdated` at offset 0 vs. offset 6400, near the end of PayAI's then-
+// 6,544-item catalog): the feed is sorted newest-activity-first — offset 0
+// was minutes old, the tail was from November 2025, nearly a year stale.
+// Real data confirmed why this matters: of the 106 Solana merchants this
+// indexer had found via uniform rotation, 77 (73%) had zero recorded
+// transactions and only 6 (5.7%) had enough activity to score above
+// INSUFFICIENT_SIGNAL — rotation was spending real budget reaching deeper
+// into an already-dead tail, not finding "different but equally good"
+// merchants. FRESH_PAGES are rescanned every cycle unconditionally (this is
+// where real, current, scoreable activity lives); only the remaining
+// (MAX_PAGES - FRESH_PAGES) budget rotates through the older tail, as a
+// slow backfill, not the primary growth strategy — same fix applied the
+// same day to src/refresh/indexer.ts's Base equivalent.
+const FRESH_PAGES = 2; // 200 freshest items (roughly half of which are Solana, per the mixed-catalog finding above), rescanned every cycle unconditionally.
 
 /** 6 decimals — cross-checked against x402scan's own facilitator constants and Solana's official USDC mint registry. Same decimal count as Base USDC, which is what makes the atomic-unit price comparison in db/queries.ts getComparablePrices valid across chains. */
 const USDC_SOLANA_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
@@ -162,44 +177,49 @@ export class PayAIDataSource implements ChainDataSource {
   async listActiveMerchants(sinceUnixSeconds: number): Promise<string[]> {
     this.cache.clear();
 
-    // Page 0 is always scanned fresh (cheap, and gives pagination.total —
-    // we don't know the real catalog size ahead of time).
-    const firstRes = await fetch(`${PAYAI_DISCOVERY_URL}?limit=${PAGE_SIZE}&offset=0`, {
-      headers: { Accept: "application/json" },
-    });
-    if (!firstRes.ok) {
-      throw new Error(`PayAI discovery request failed: ${firstRes.status} ${firstRes.statusText}`);
+    // Pages 0..FRESH_PAGES-1 are always scanned, every cycle, unconditionally
+    // — see FRESH_PAGES' own comment for why: this is where real, current,
+    // scoreable merchant activity actually lives, confirmed by direct
+    // sampling of the feed's own `lastUpdated` ordering. Page 0's response
+    // also gives pagination.total, which the rotation below needs and which
+    // isn't knowable ahead of time.
+    let total = 0;
+    for (let page = 0; page < FRESH_PAGES; page++) {
+      const offset = page * PAGE_SIZE;
+      const res = await fetch(`${PAYAI_DISCOVERY_URL}?limit=${PAGE_SIZE}&offset=${offset}`, {
+        headers: { Accept: "application/json" },
+      });
+      if (!res.ok) {
+        throw new Error(`PayAI discovery request failed: ${res.status} ${res.statusText}`);
+      }
+      const body = (await res.json()) as DiscoveryListResponse;
+      for (const item of body.items) {
+        this.ingestItem(item);
+      }
+      total = body.pagination.total;
+      if (offset + PAGE_SIZE >= total || body.items.length === 0) break; // catalog smaller than FRESH_PAGES itself
     }
-    const firstBody = (await firstRes.json()) as DiscoveryListResponse;
-    for (const item of firstBody.items) {
-      this.ingestItem(item);
-    }
-    const total = firstBody.pagination.total;
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-    // Rotate which of the REMAINING (MAX_PAGES - 1) pages get scanned each
-    // cycle — added 2026-08-18 after a real, confirmed finding: this always
-    // started at offset 0 and scanned the same fixed MAX_PAGES window every
-    // single cycle, forever. PayAI's real catalog is ~26,000+ items (checked
-    // live), far bigger than one cycle's budget — a fixed window landed on
-    // a couple of merchants each backing ~100 near-duplicate resource
-    // listings (not real breadth), so total unique Solana merchants
-    // discovered stayed flat at ~34-36 across many refresh cycles despite
-    // "scanning 500 items" every time. Now every cycle covers a different
-    // slice, so new merchants keep surfacing over time instead of the same
-    // ones forever — though at MAX_PAGES pages/cycle on a 2h cadence
-    // (changed 2026-08-19 from 4h — twice as many cycles/day, roughly
-    // halving sweep time), a full sweep of a ~26,000-item catalog still
-    // takes weeks, not days; this fixes staleness/repetition, it does not
+    // Rotate which of the REMAINING (MAX_PAGES - FRESH_PAGES) pages get
+    // scanned each cycle — a slow backfill sweep through the older tail
+    // beyond the fresh window above, not the primary growth strategy (see
+    // FRESH_PAGES' own comment). Originally added 2026-08-18 as uniform
+    // rotation across all MAX_PAGES; refined 2026-09-17 once the feed turned
+    // out to be recency-sorted rather than arbitrary — see FRESH_PAGES.
+    // PayAI's real catalog was ~26,000+ items on 2026-08-18, ~6,544 as of
+    // 2026-09-17 (a real, large drop, not a measurement error — checked live
+    // both times); a full sweep of even the smaller current size still takes
+    // weeks at this cadence, this fixes staleness/repetition, it does not
     // make discovery instant.
-    const remainingPageBudget = MAX_PAGES - 1;
-    const rotatablePages = Math.max(1, totalPages - 1); // excludes page 0, already covered above
+    const remainingPageBudget = MAX_PAGES - FRESH_PAGES;
+    const rotatablePages = Math.max(1, totalPages - FRESH_PAGES); // excludes the fresh pages, already covered above
     const cycleSeconds = 2 * 60 * 60; // matches wrangler.toml's refresh cron cadence
     const epoch = Math.floor(Date.now() / 1000 / cycleSeconds);
     const startIndex = epoch % rotatablePages;
 
     for (let i = 0; i < remainingPageBudget; i++) {
-      const pageNum = 1 + ((startIndex + i) % rotatablePages);
+      const pageNum = FRESH_PAGES + ((startIndex + i) % rotatablePages);
       const offset = pageNum * PAGE_SIZE;
       if (offset >= total) continue;
       const res = await fetch(`${PAYAI_DISCOVERY_URL}?limit=${PAGE_SIZE}&offset=${offset}`, {

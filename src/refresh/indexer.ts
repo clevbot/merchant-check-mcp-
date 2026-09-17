@@ -40,15 +40,27 @@ const BAZAAR_DISCOVERY_URL = "https://api.cdp.coinbase.com/platform/v2/x402/disc
 /** Exported so other modules (e.g. src/dashboard.ts) filter on the same value rather than a second hardcoded copy. */
 export const BASE_MAINNET_NETWORK = "eip155:8453";
 const PAGE_SIZE = 100;
-// 20 pages * 100 = up to 2,000 resources scanned per refresh run — not the
-// same as 2,000 resources total anymore (see listActiveMerchants' rotation
-// comment, added 2026-09-17): each run's 2,000-item window now rotates
-// through the whole catalog over successive cycles instead of always being
-// the same first 2,000. Bazaar had ~14.5k total resources as of 2026-08-10,
-// ~15.9k as of 2026-09-17; raise this once refresh-worker runtime/cost at a
-// wider per-run slice is known. Cheaper than it sounds since this is a
-// single unauthenticated fetch loop, not per-wallet chain calls.
+// 20 pages * 100 = up to 2,000 resources scanned per refresh run. Bazaar had
+// ~14.5k total resources as of 2026-08-10, ~15.9k as of 2026-09-17; raise
+// this once refresh-worker runtime/cost at a wider per-run slice is known.
+// Cheaper than it sounds since this is a single unauthenticated fetch loop,
+// not per-wallet chain calls.
 const MAX_PAGES = 20;
+// Confirmed live 2026-09-17 by direct sampling (comparing each item's own
+// `lastUpdated` at offset 0 vs. offset 2000 vs. offset 15000): Bazaar's feed
+// is sorted newest-activity-first, not arbitrarily. Position ~2000 was
+// already ~4 weeks stale; the tail is months old. This matters a lot for
+// what "rotating through the catalog" (added earlier the same day) actually
+// does: uniform rotation treats a page of months-old dead listings as
+// equally worth a scan as the freshest page, which very concretely isn't
+// true — real data confirmed on the Solana side (src/refresh/solana-
+// indexer.ts's identical FRESH_PAGES fix) that most merchants surfaced this
+// way have near-zero real activity and can't be scored above INSUFFICIENT_
+// SIGNAL anyway. FRESH_PAGES are rescanned every single cycle regardless of
+// rotation — this is where real, current, scoreable activity actually is —
+// and only the remaining (MAX_PAGES - FRESH_PAGES) budget rotates through
+// the older tail, as a slow backfill, not the primary growth strategy.
+const FRESH_PAGES = 5; // 500 freshest items, rescanned every cycle unconditionally.
 
 export interface RawMerchantActivity {
   walletAddress: string;
@@ -126,45 +138,45 @@ export class BazaarDataSource implements ChainDataSource {
   async listActiveMerchants(_sinceUnixSeconds: number): Promise<string[]> {
     this.cache.clear();
 
-    // Page 0 is always scanned fresh (cheap, and gives pagination.total —
-    // we don't know the real catalog size ahead of time).
-    const firstRes = await fetch(`${BAZAAR_DISCOVERY_URL}?limit=${PAGE_SIZE}&offset=0`, {
-      headers: { Accept: "application/json" },
-    });
-    if (!firstRes.ok) {
-      throw new Error(`Bazaar discovery request failed: ${firstRes.status} ${firstRes.statusText}`);
+    // Pages 0..FRESH_PAGES-1 are always scanned, every cycle, unconditionally
+    // — see FRESH_PAGES' own comment for why: this is where real, current,
+    // scoreable merchant activity actually lives, confirmed by direct
+    // sampling of the feed's own `lastUpdated` ordering. Page 0's response
+    // also gives pagination.total, which the rotation below needs and which
+    // isn't knowable ahead of time.
+    let total = 0;
+    for (let page = 0; page < FRESH_PAGES; page++) {
+      const offset = page * PAGE_SIZE;
+      const res = await fetch(`${BAZAAR_DISCOVERY_URL}?limit=${PAGE_SIZE}&offset=${offset}`, {
+        headers: { Accept: "application/json" },
+      });
+      if (!res.ok) {
+        throw new Error(`Bazaar discovery request failed: ${res.status} ${res.statusText}`);
+      }
+      const body = (await res.json()) as BazaarListResponse;
+      for (const item of body.items) {
+        this.ingestItem(item);
+      }
+      total = body.pagination.total;
+      if (offset + PAGE_SIZE >= total || body.items.length === 0) break; // catalog smaller than FRESH_PAGES itself
     }
-    const firstBody = (await firstRes.json()) as BazaarListResponse;
-    for (const item of firstBody.items) {
-      this.ingestItem(item);
-    }
-    const total = firstBody.pagination.total;
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-    // Rotate which of the REMAINING (MAX_PAGES - 1) pages get scanned each
-    // cycle — added 2026-09-17 after a real, confirmed finding (same
-    // pattern src/refresh/solana-indexer.ts's PayAIDataSource already fixed
-    // for the identical reason 2026-08-18): this always started at offset 0
-    // and scanned the same fixed MAX_PAGES window every single cycle,
-    // forever. Confirmed live: Bazaar's Base catalog had grown to ~15,875
-    // resources while this indexer had never scanned past position 2,000,
-    // and 2,000 raw resource listings collapse to only ~542 distinct payTo
-    // wallets (merchants commonly back several resource routes each) — this
-    // indexer's own merchant_signals count (695) lines up almost exactly
-    // with that fixed window's unique-wallet count, not coincidentally.
-    // Now every cycle covers a different slice, so new merchants keep
-    // surfacing over time instead of the same ~540 forever. Same caveat as
-    // the Solana version: this fixes staleness/repetition, it does not make
-    // a full sweep of a growing ~16k-item catalog instant — at MAX_PAGES
-    // pages/cycle on a 2h cadence, a full sweep still takes days to weeks.
-    const remainingPageBudget = MAX_PAGES - 1;
-    const rotatablePages = Math.max(1, totalPages - 1); // excludes page 0, already covered above
+    // Rotate which of the REMAINING (MAX_PAGES - FRESH_PAGES) pages get
+    // scanned each cycle — a slow backfill sweep through the older tail
+    // beyond the fresh window above, not the primary growth strategy (see
+    // FRESH_PAGES' own comment). Same underlying rotation mechanism first
+    // added 2026-09-17 (deterministic epoch/cadence math, no state to
+    // persist across runs), refined the same day once the feed turned out
+    // to be recency-sorted rather than arbitrary.
+    const remainingPageBudget = MAX_PAGES - FRESH_PAGES;
+    const rotatablePages = Math.max(1, totalPages - FRESH_PAGES); // excludes the fresh pages, already covered above
     const cycleSeconds = 2 * 60 * 60; // matches wrangler.toml's refresh cron cadence
     const epoch = Math.floor(Date.now() / 1000 / cycleSeconds);
     const startIndex = epoch % rotatablePages;
 
     for (let i = 0; i < remainingPageBudget; i++) {
-      const pageNum = 1 + ((startIndex + i) % rotatablePages);
+      const pageNum = FRESH_PAGES + ((startIndex + i) % rotatablePages);
       const offset = pageNum * PAGE_SIZE;
       if (offset >= total) continue;
       const res = await fetch(`${BAZAAR_DISCOVERY_URL}?limit=${PAGE_SIZE}&offset=${offset}`, {
