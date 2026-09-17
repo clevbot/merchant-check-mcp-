@@ -8,7 +8,8 @@ import { createPaymentWrapper } from "@x402/mcp";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { z } from "zod";
 import { checkMerchant } from "./tool";
-import { logQuery, getMetricsSummary } from "./db/queries";
+import { logQuery, getMetricsSummary, logRequestEvent, getRequestAnalytics } from "./db/queries";
+import { renderRequestAnalyticsHtml, requestAnalyticsToJson } from "./requestAnalytics";
 import type { CheckMerchantOutput, Env } from "./types";
 import { runRefresh } from "./refresh";
 import { runCategorization } from "./categorize";
@@ -112,14 +113,116 @@ function getResourceServer(env: Env): Promise<x402ResourceServer> {
       // out of USDC in one log line instead of a guessing game — real
       // ongoing value, not scaffolding to strip out. Logging costs nothing
       // and never changes the response sent to the caller.
+      // Extended 2026-09-17 (see "significant rise in invocations, no
+      // payments" investigation) to also persist the failure into
+      // request_events, not just console.error — the funnel's middle
+      // segment (a real payment WAS attached and rejected), source for
+      // src/requestAnalytics.ts.
+      //
+      // No caller_ip/user_agent/asn/country here, deliberately: this
+      // resourceServer (and this hook registration) is memoized per-isolate
+      // via resourceServerPromise above, not created fresh per request —
+      // see getResourceServer's own comment. Closing over the triggering
+      // request's metadata here would be reading whichever request last
+      // happened to be in flight when concurrent requests share an isolate,
+      // not necessarily the one that actually failed verification. ctx
+      // (ExecutionContext) has the exact same staleness problem, so this
+      // awaits the write directly rather than using ctx.waitUntil.
+      // ctx.transportContext is safe to read (see @x402/mcp's own
+      // createPaymentWrapper source): it's a plain per-call argument passed
+      // fresh into verifyPayment() for this invocation of this hook, not
+      // isolate-shared state — {toolName, arguments, meta} for the MCP
+      // path, undefined for the GET /check HTTP path (a different wrapper
+      // class that doesn't set it), which is how the two are told apart
+      // below.
       server.onVerifyFailure(async (ctx) => {
-        console.error("x402 verify failure:", ctx.error?.message ?? ctx.error, JSON.stringify(ctx.requirements));
+        const errorMessage = ctx.error?.message ?? String(ctx.error);
+        console.error("x402 verify failure:", errorMessage, JSON.stringify(ctx.requirements));
+        const mcpContext = ctx.transportContext as { toolName?: string; arguments?: Record<string, unknown> } | undefined;
+        await logRequestEvent(env, {
+          path: mcpContext?.toolName ? "/mcp" : "/check",
+          eventType: "verify_failed",
+          toolName: mcpContext?.toolName ?? "check_merchant",
+          queriedWalletAddress: (mcpContext?.arguments?.merchant_wallet_address as string) ?? null,
+          verifyError: errorMessage,
+          callerIp: null,
+          userAgent: null,
+          asn: null,
+          asOrganization: null,
+          country: null,
+          colo: null,
+        }).catch((err) => console.error("logRequestEvent (verify_failed) failed:", err));
       });
       await server.initialize();
       return server;
     })();
   }
   return resourceServerPromise;
+}
+
+interface CallerMeta {
+  callerIp: string | null;
+  userAgent: string | null;
+  asn: number | null;
+  asOrganization: string | null;
+  country: string | null;
+  colo: string | null;
+}
+
+/** Straight from Cloudflare's own request.cf object and standard headers — see db/schema.sql request_events comment on why this isn't a new kind of tracking. */
+function extractCallerMeta(request: Request): CallerMeta {
+  const cf = request.cf as
+    | { asn?: number; asOrganization?: string; country?: string; colo?: string }
+    | undefined;
+  return {
+    callerIp: request.headers.get("cf-connecting-ip"),
+    userAgent: request.headers.get("user-agent"),
+    asn: cf?.asn ?? null,
+    asOrganization: cf?.asOrganization ?? null,
+    country: cf?.country ?? null,
+    colo: cf?.colo ?? null,
+  };
+}
+
+/**
+ * Top of the funnel for the MCP path: fires for a `tools/call` on
+ * check_merchant that doesn't (yet) carry a payment payload — the case
+ * that never reaches verifyPayment() at all (createPaymentWrapper returns
+ * a 402 directly), so onVerifyFailure below can never see it. Deliberately
+ * does NOT fire for a retry that does carry a payment payload — that
+ * request is a real attempt, whose outcome onVerifyFailure or
+ * onAfterSettlement will already capture; counting it here too would
+ * double up and inflate the "never even tried to pay" read this exists to
+ * measure honestly.
+ *
+ * Reads the request body via request.clone() — the original Request is
+ * untouched and still readable by transport.handleRequest() afterward.
+ * "x402/payment" is @x402/mcp's own MCP_PAYMENT_META_KEY constant
+ * (confirmed by reading its compiled source, not documented publicly);
+ * duplicated here as a literal rather than imported since the package
+ * doesn't export it.
+ */
+async function logMcpAttemptIfUnpaid(request: Request, env: Env, ctx: ExecutionContext): Promise<void> {
+  let body: { method?: string; params?: { name?: string; arguments?: Record<string, unknown>; _meta?: Record<string, unknown> } };
+  try {
+    body = await request.clone().json();
+  } catch {
+    return; // Not a parseable single JSON-RPC request (e.g. a batch, or malformed) — not worth guessing at.
+  }
+  if (body.method !== "tools/call" || body.params?.name !== "check_merchant") return;
+  if (body.params._meta?.["x402/payment"]) return; // Real payment attempt — let onVerifyFailure/onAfterSettlement cover it.
+
+  const meta = extractCallerMeta(request);
+  ctx.waitUntil(
+    logRequestEvent(env, {
+      path: "/mcp",
+      eventType: "challenge_issued",
+      toolName: "check_merchant",
+      queriedWalletAddress: (body.params.arguments?.merchant_wallet_address as string) ?? null,
+      verifyError: null,
+      ...meta,
+    }).catch((err) => console.error("logRequestEvent (challenge_issued) failed:", err)),
+  );
 }
 
 async function buildAccepts(env: Env, server: x402ResourceServer): Promise<PaymentRequirements[]> {
@@ -472,6 +575,27 @@ export default {
       });
     }
 
+    // Request-funnel dashboard (2026-09-17) — see src/requestAnalytics.ts
+    // module comment for the full "invocations up, payments flat"
+    // investigation this answers. Same gating/posture as /admin/callers
+    // just above: admin-token, not linked publicly, ?window= in seconds
+    // (defaults to 7 days).
+    if (url.pathname === "/admin/requests" && request.method === "GET") {
+      if (request.headers.get("X-Admin-Token") !== env.ADMIN_TOKEN || !env.ADMIN_TOKEN) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      const windowParam = url.searchParams.get("window");
+      const windowSeconds = windowParam ? Number(windowParam) : 7 * 24 * 60 * 60;
+      const analytics = await getRequestAnalytics(env, windowSeconds);
+      if (url.searchParams.get("format") === "json") {
+        return requestAnalyticsToJson(analytics);
+      }
+      return new Response(renderRequestAnalyticsHtml(analytics), {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+
     // Human-facing homepage (gradientdecisions.com) and agent-facing MCP
     // endpoint (mcp.gradientdecisions.com) share this one Worker — routed
     // by pathname rather than hostname so it also works from the
@@ -628,6 +752,10 @@ export default {
 
     if (url.pathname !== "/mcp") {
       return new Response("Not found. MCP endpoint is at /mcp.", { status: 404 });
+    }
+
+    if (request.method === "POST") {
+      await logMcpAttemptIfUnpaid(request, env, ctx);
     }
 
     const resourceServer = await getResourceServer(env);

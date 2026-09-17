@@ -31,7 +31,7 @@ import type { Network } from "@x402/core/types";
 import type { x402ResourceServer } from "@x402/core/server";
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { checkMerchant } from "./tool";
-import { logQuery } from "./db/queries";
+import { logQuery, logRequestEvent } from "./db/queries";
 import { SAMPLE_CHECK_MERCHANT_INPUT, SAMPLE_CHECK_MERCHANT_OUTPUT } from "./agentReadiness";
 import type { CheckMerchantInput, Env } from "./types";
 
@@ -158,6 +158,28 @@ export async function handleCheckGet(request: Request, env: Env, resourceServer:
   // header some older clients still send — accept either, same tolerance
   // @x402/mcp already gives MCP callers on the /mcp path.
   const paymentHeader = request.headers.get("PAYMENT-SIGNATURE") ?? request.headers.get("X-PAYMENT") ?? undefined;
+
+  // Top-of-funnel logging for the HTTP path — same reasoning as
+  // src/index.ts's logMcpAttemptIfUnpaid, simpler here since payment is a
+  // plain header rather than something buried in a JSON-RPC body. Awaited
+  // directly (not ctx.waitUntil) since this path sees far less traffic
+  // than /mcp per the investigation that added this — not worth threading
+  // ExecutionContext into this function just for it.
+  if (!paymentHeader) {
+    await logRequestEvent(env, {
+      path: "/check",
+      eventType: "challenge_issued",
+      toolName: "check_merchant",
+      queriedWalletAddress: merchantWalletAddress,
+      verifyError: null,
+      callerIp: request.headers.get("cf-connecting-ip"),
+      userAgent: request.headers.get("user-agent"),
+      asn: (request.cf as { asn?: number } | undefined)?.asn ?? null,
+      asOrganization: (request.cf as { asOrganization?: string } | undefined)?.asOrganization ?? null,
+      country: (request.cf as { country?: string } | undefined)?.country ?? null,
+      colo: (request.cf as { colo?: string } | undefined)?.colo ?? null,
+    }).catch((err) => console.error("logRequestEvent (challenge_issued, /check) failed:", err));
+  }
 
   const result = await httpServer.processHTTPRequest({
     adapter,

@@ -136,6 +136,222 @@ export async function logQuery(env: Env, params: LogQueryParams): Promise<void> 
     .run();
 }
 
+export interface LogRequestEventParams {
+  path: "/mcp" | "/check";
+  eventType: "challenge_issued" | "verify_failed";
+  toolName: string | null;
+  queriedWalletAddress: string | null;
+  /** Only meaningful for eventType 'verify_failed'. */
+  verifyError: string | null;
+  callerIp: string | null;
+  userAgent: string | null;
+  asn: number | null;
+  asOrganization: string | null;
+  country: string | null;
+  colo: string | null;
+}
+
+/**
+ * Writes the top/middle of the funnel query_log's own comment (see
+ * getMetricsSummary below) flagged as a real, unaddressed gap: "it cannot
+ * see how many 402 challenges were issued that never converted to a call
+ * here... measuring that needs instrumentation earlier in the x402
+ * handshake." This is that instrumentation — see db/schema.sql
+ * request_events for the full reasoning on why 'settled' is deliberately
+ * not a value logged here (query_log stays the sole source of truth for
+ * that fact).
+ *
+ * Called from src/index.ts's onPaymentRequired/onVerifyFailure hooks via
+ * ctx.waitUntil — fire-and-forget, must never add latency or a failure
+ * mode to the actual payment path it's observing.
+ */
+export async function logRequestEvent(env: Env, params: LogRequestEventParams): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO request_events (
+      occurred_at, path, event_type, tool_name, queried_wallet_address, verify_error,
+      caller_ip, user_agent, asn, as_organization, country, colo
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(
+      Math.floor(Date.now() / 1000),
+      params.path,
+      params.eventType,
+      params.toolName,
+      params.queriedWalletAddress,
+      params.verifyError,
+      params.callerIp,
+      params.userAgent,
+      params.asn,
+      params.asOrganization,
+      params.country,
+      params.colo,
+    )
+    .run();
+}
+
+export interface FunnelCounts {
+  challengeIssued: number;
+  verifyFailed: number;
+  settled: number;
+}
+
+export interface TopCount {
+  value: string;
+  count: number;
+}
+
+export interface DailyFunnel {
+  day: string; // YYYY-MM-DD
+  challengeIssued: number;
+  verifyFailed: number;
+  settled: number;
+}
+
+export interface RequestAnalytics {
+  windowSeconds: number;
+  funnel: FunnelCounts;
+  topUserAgents: TopCount[];
+  topAsOrganizations: TopCount[];
+  topCountries: TopCount[];
+  /** What callers are actually asking about — top queried_wallet_address values across both event types. */
+  topRequestedWallets: TopCount[];
+  dailyFunnel: DailyFunnel[];
+  /** Most recent raw events, newest first — for eyeballing real traffic, not just aggregates. */
+  recentEvents: (LogRequestEventParams & { occurredAt: number })[];
+}
+
+/**
+ * Reads request_events + query_log together to build the full funnel —
+ * see src/requestAnalytics.ts for the admin page this backs. 'settled'
+ * comes from query_log (see logRequestEvent's own comment for why it's
+ * not duplicated into request_events); everything else comes from
+ * request_events. Capped/windowed reads throughout — this is a debugging
+ * view, not a paginated report, same posture as getCallerAnalytics.
+ */
+export async function getRequestAnalytics(env: Env, windowSeconds: number): Promise<RequestAnalytics> {
+  const since = Math.floor(Date.now() / 1000) - windowSeconds;
+
+  const [
+    challengeRow,
+    verifyFailedRow,
+    settledRow,
+    uaRows,
+    asOrgRows,
+    countryRows,
+    walletRows,
+    requestEventDailyRows,
+    settledDailyRows,
+    recentRows,
+  ] = await Promise.all([
+    env.DB.prepare(`SELECT COUNT(*) as n FROM request_events WHERE event_type = 'challenge_issued' AND occurred_at >= ?`)
+      .bind(since)
+      .first<{ n: number }>(),
+    env.DB.prepare(`SELECT COUNT(*) as n FROM request_events WHERE event_type = 'verify_failed' AND occurred_at >= ?`)
+      .bind(since)
+      .first<{ n: number }>(),
+    env.DB.prepare(`SELECT COUNT(*) as n FROM query_log WHERE queried_at >= ?`).bind(since).first<{ n: number }>(),
+    env.DB.prepare(
+      `SELECT user_agent as value, COUNT(*) as count FROM request_events
+       WHERE occurred_at >= ? AND user_agent IS NOT NULL
+       GROUP BY user_agent ORDER BY count DESC LIMIT 15`,
+    )
+      .bind(since)
+      .all<TopCount>(),
+    env.DB.prepare(
+      `SELECT as_organization as value, COUNT(*) as count FROM request_events
+       WHERE occurred_at >= ? AND as_organization IS NOT NULL
+       GROUP BY as_organization ORDER BY count DESC LIMIT 15`,
+    )
+      .bind(since)
+      .all<TopCount>(),
+    env.DB.prepare(
+      `SELECT country as value, COUNT(*) as count FROM request_events
+       WHERE occurred_at >= ? AND country IS NOT NULL
+       GROUP BY country ORDER BY count DESC LIMIT 15`,
+    )
+      .bind(since)
+      .all<TopCount>(),
+    env.DB.prepare(
+      `SELECT queried_wallet_address as value, COUNT(*) as count FROM request_events
+       WHERE occurred_at >= ? AND queried_wallet_address IS NOT NULL
+       GROUP BY queried_wallet_address ORDER BY count DESC LIMIT 15`,
+    )
+      .bind(since)
+      .all<TopCount>(),
+    env.DB.prepare(
+      `SELECT
+         date(occurred_at, 'unixepoch') as day,
+         SUM(CASE WHEN event_type = 'challenge_issued' THEN 1 ELSE 0 END) as challengeIssued,
+         SUM(CASE WHEN event_type = 'verify_failed' THEN 1 ELSE 0 END) as verifyFailed
+       FROM request_events WHERE occurred_at >= ? GROUP BY day ORDER BY day ASC`,
+    )
+      .bind(since)
+      .all<{ day: string; challengeIssued: number; verifyFailed: number }>(),
+    env.DB.prepare(
+      `SELECT date(queried_at, 'unixepoch') as day, COUNT(*) as settled
+       FROM query_log WHERE queried_at >= ? GROUP BY day ORDER BY day ASC`,
+    )
+      .bind(since)
+      .all<{ day: string; settled: number }>(),
+    env.DB.prepare(
+      `SELECT occurred_at, path, event_type, tool_name, queried_wallet_address, verify_error,
+              caller_ip, user_agent, asn, as_organization, country, colo
+       FROM request_events WHERE occurred_at >= ? ORDER BY occurred_at DESC LIMIT 200`,
+    )
+      .bind(since)
+      .all<Record<string, unknown>>(),
+  ]);
+
+  const settledByDay = new Map((settledDailyRows.results ?? []).map((r) => [r.day, r.settled]));
+
+  return {
+    windowSeconds,
+    funnel: {
+      challengeIssued: challengeRow?.n ?? 0,
+      verifyFailed: verifyFailedRow?.n ?? 0,
+      settled: settledRow?.n ?? 0,
+    },
+    topUserAgents: uaRows.results ?? [],
+    topAsOrganizations: asOrgRows.results ?? [],
+    topCountries: countryRows.results ?? [],
+    topRequestedWallets: walletRows.results ?? [],
+    dailyFunnel: mergeDailyFunnel(requestEventDailyRows.results ?? [], settledByDay),
+    recentEvents: (recentRows.results ?? []).map((r) => ({
+      occurredAt: r.occurred_at as number,
+      path: r.path as "/mcp" | "/check",
+      eventType: r.event_type as "challenge_issued" | "verify_failed",
+      toolName: (r.tool_name as string) ?? null,
+      queriedWalletAddress: (r.queried_wallet_address as string) ?? null,
+      verifyError: (r.verify_error as string) ?? null,
+      callerIp: (r.caller_ip as string) ?? null,
+      userAgent: (r.user_agent as string) ?? null,
+      asn: (r.asn as number) ?? null,
+      asOrganization: (r.as_organization as string) ?? null,
+      country: (r.country as string) ?? null,
+      colo: (r.colo as string) ?? null,
+    })),
+  };
+}
+
+function mergeDailyFunnel(
+  requestEventDays: { day: string; challengeIssued: number; verifyFailed: number }[],
+  settledByDay: Map<string, number>,
+): DailyFunnel[] {
+  const days = new Map<string, DailyFunnel>();
+  for (const row of requestEventDays) {
+    days.set(row.day, { day: row.day, challengeIssued: row.challengeIssued, verifyFailed: row.verifyFailed, settled: 0 });
+  }
+  for (const [day, settled] of settledByDay) {
+    const existing = days.get(day);
+    if (existing) {
+      existing.settled = settled;
+    } else {
+      days.set(day, { day, challengeIssued: 0, verifyFailed: 0, settled });
+    }
+  }
+  return [...days.values()].sort((a, b) => a.day.localeCompare(b.day));
+}
+
 export interface MetricsSummary {
   windowSeconds: number;
   totalChecks: number;

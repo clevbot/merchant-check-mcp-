@@ -191,3 +191,59 @@ CREATE TABLE IF NOT EXISTS query_log (
   caller_supplied_price_atomic INTEGER,
   queried_at              INTEGER NOT NULL
 );
+
+-- Added 2026-09-17, after a real "invocations way up, payments flat"
+-- investigation (see the conversation this shipped in): query_log only
+-- ever captures a *settled* check_merchant call, so it had nothing to say
+-- about the much larger number of callers who never got that far. This is
+-- the rest of the funnel: every time a 402 challenge is issued for
+-- check_merchant/GET /check (event_type = 'challenge_issued', the top of
+-- the funnel — includes pure discovery/monitoring pings with no payment
+-- attempt at all, which is expected to be the majority), and every time a
+-- payment WAS attached but failed verification (event_type =
+-- 'verify_failed', with the real facilitator error in verify_error —
+-- upgrades the src/index.ts onVerifyFailure hook, which previously only
+-- console.error'd this and lost it). A *settled* call is deliberately NOT
+-- duplicated into this table — query_log is already the source of truth
+-- for that, joined by src/requestAnalytics.ts at read time rather than
+-- writing the same fact twice.
+--
+-- Volume note: 'challenge_issued' fires on every unpaid request, so this
+-- table grows much faster than query_log ever did (real measured rate:
+-- thousands/day from monitoring bots alone). No retention/pruning is
+-- implemented yet — acceptable for now as a diagnostic tool, but revisit
+-- if D1 storage becomes a real constraint.
+CREATE TABLE IF NOT EXISTS request_events (
+  id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+  occurred_at             INTEGER NOT NULL,
+  -- '/mcp' or '/check' — the two real payment-gated entry points.
+  path                    TEXT NOT NULL,
+  -- 'challenge_issued' | 'verify_failed'. See comment above for why
+  -- 'settled' isn't a value here.
+  event_type              TEXT NOT NULL,
+  -- 'check_merchant' — the one real tool today, kept as a column (not
+  -- hardcoded in queries) since a second tool would otherwise silently
+  -- fall through unlabeled.
+  tool_name               TEXT,
+  -- merchant_wallet_address from the request args, when present/parseable
+  -- — "what are they looking for", not a caller identity.
+  queried_wallet_address  TEXT,
+  -- Only set for event_type = 'verify_failed' — the real facilitator/x402
+  -- error message, e.g. "insufficient_funds", a signature mismatch, or a
+  -- stale/mismatched price. NULL for 'challenge_issued' (nothing failed
+  -- yet at that point, there's nothing to attach).
+  verify_error            TEXT,
+  -- Request-level metadata, all straight from Cloudflare's own request.cf
+  -- object and standard headers — the same class of data Cloudflare's own
+  -- dashboard already shows for every request, not a new kind of tracking.
+  -- No IP-to-identity resolution attempted anywhere in this codebase (see
+  -- src/callerDashboard.ts's own "No-identity-resolution principle") and
+  -- that stays true here: this is for spotting bot/crawler patterns
+  -- (shared user_agent, shared ASN), not identifying a person.
+  caller_ip               TEXT,
+  user_agent              TEXT,
+  asn                     INTEGER,
+  as_organization         TEXT,
+  country                 TEXT,
+  colo                    TEXT
+);
