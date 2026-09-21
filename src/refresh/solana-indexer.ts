@@ -183,7 +183,13 @@ export class PayAIDataSource implements ChainDataSource {
   // run once before getMerchantActivity() is called, on the same instance.
   private cache = new Map<string, RawMerchantActivity>();
 
-  constructor(private readonly heliusApiKey: string | undefined) {}
+  // db is optional so existing tests/call sites that construct this without
+  // a D1 binding keep working (falls back to the old, no-preservation
+  // behavior) — see preserveKnownActivity's own comment for what it's for.
+  constructor(
+    private readonly heliusApiKey: string | undefined,
+    private readonly db?: D1Database,
+  ) {}
 
   async listActiveMerchants(sinceUnixSeconds: number): Promise<string[]> {
     this.cache.clear();
@@ -255,6 +261,8 @@ export class PayAIDataSource implements ChainDataSource {
     if (trimmedKey) {
       await this.augmentWithHelius(sinceUnixSeconds, trimmedKey);
     }
+
+    await this.preserveKnownActivity();
 
     return [...this.cache.keys()];
   }
@@ -383,6 +391,68 @@ export class PayAIDataSource implements ChainDataSource {
         // numbers, same outcome as if HELIUS_API_KEY were unset for it.
         console.error(`Helius augmentation failed for ${wallet}:`, err);
       }
+    }
+  }
+
+  /**
+   * Real data-integrity bug, found 2026-09-21, not just a coverage gap:
+   * refresh/index.ts's upsertSignals unconditionally overwrites
+   * total_tx_count/unique_payer_count with whatever this cycle computed —
+   * correct for BazaarDataSource (Bazaar ships real quality numbers with
+   * every listing), but wrong here, where PayAI ships none and only
+   * MAX_HELIUS_WALLETS (8, out of however many wallets get discovered per
+   * cycle) actually get real numbers via augmentWithHelius above. Before
+   * FRESH_PAGES existed, a wallet lucky enough to get Helius-enriched once
+   * mostly stayed undisturbed (rotation rarely revisited the same page
+   * soon), so the bug was latent. Once FRESH_PAGES made the fresh window
+   * get rescanned every single cycle by design, this became actively
+   * destructive: a wallet enriched on cycle N (real tx_count=50, correctly
+   * "trusted") gets rediscovered on cycle N+1 still at PayAI's bare 0/0
+   * (since it's very unlikely to be one of that cycle's 8 lucky Helius
+   * picks again), and the upsert overwrites its good stored data with
+   * fresh zeros — verified live: after FRESH_PAGES shipped, Solana's
+   * zero-activity share didn't improve, it went from 73% to 83%, entirely
+   * consistent with genuinely-enriched wallets being wiped back to zero on
+   * almost every cycle they don't get relucky.
+   *
+   * Fix: for any wallet still at 0/0 after augmentWithHelius above (i.e.
+   * PayAI's bare default, never actually re-verified this cycle), check
+   * D1 for a previously-stored row and carry its numbers forward instead
+   * of overwriting them with zero. One batched query, not one per wallet —
+   * D1 query count isn't the tight budget in this file (that's external
+   * fetches; see MAX_PAGES' own comment), so this doesn't compete with the
+   * Bazaar/PayAI/Helius subrequest ceiling at all. Silently a no-op when
+   * `db` wasn't provided (see constructor) or the cache is empty.
+   *
+   * Deliberately NOT applied to BazaarDataSource: Bazaar's l30DaysTotalCalls
+   * is a real, legitimately-fluctuating rolling window — a merchant's
+   * recent volume genuinely can (and should be allowed to) drop, and
+   * "preserving" an old higher number there would hide a real decline
+   * instead of protecting against a false one.
+   */
+  private async preserveKnownActivity(): Promise<void> {
+    if (!this.db) return;
+    const staleWallets = [...this.cache.entries()]
+      .filter(([, activity]) => activity.txCount === 0 && activity.uniquePayerCount === 0)
+      .map(([wallet]) => wallet);
+    if (staleWallets.length === 0) return;
+
+    const placeholders = staleWallets.map(() => "?").join(", ");
+    const { results } = await this.db
+      .prepare(
+        `SELECT wallet_address, total_tx_count, unique_payer_count, first_seen_at
+         FROM merchant_signals WHERE chain = 'solana' AND wallet_address IN (${placeholders})`,
+      )
+      .bind(...staleWallets)
+      .all<{ wallet_address: string; total_tx_count: number; unique_payer_count: number; first_seen_at: number | null }>();
+
+    for (const row of results) {
+      if (row.total_tx_count <= 0) continue; // nothing better to preserve
+      const activity = this.cache.get(row.wallet_address);
+      if (!activity) continue;
+      activity.txCount = row.total_tx_count;
+      activity.uniquePayerCount = row.unique_payer_count;
+      activity.firstSeenAt = activity.firstSeenAt ?? row.first_seen_at;
     }
   }
 }

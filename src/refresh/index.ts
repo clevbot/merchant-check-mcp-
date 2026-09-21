@@ -30,7 +30,7 @@ export async function runRefresh(env: Env): Promise<void> {
   // distinguished by wallet_address format + the `chain` column (see
   // db/schema.sql) — nothing below needs to know which source a wallet came
   // from beyond that.
-  const sources: ChainDataSource[] = [new BazaarDataSource(), new PayAIDataSource(env.HELIUS_API_KEY)];
+  const sources: ChainDataSource[] = [new BazaarDataSource(), new PayAIDataSource(env.HELIUS_API_KEY, env.DB)];
 
   const nowSeconds = Math.floor(Date.now() / 1000);
   const sinceSeconds = nowSeconds - 90 * 24 * 60 * 60; // look back 90 days for the active-merchant list
